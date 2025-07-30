@@ -1,1 +1,45 @@
 # Daily schedule automation
+# Discord Schedule Bot - 연결 테스트
+name: Discord Connection Test
+
+# 언제 실행할지 설정
+on:
+  # 수동으로 실행할 수 있게 설정 (테스트용)
+  workflow_dispatch:
+  
+  # 나중에 자동 실행을 위한 스케줄 (현재는 주석 처리)
+  # schedule:
+  #   - cron: '0 9 * * *'  # 매일 오전 9시 (한국시간 오후 6시)
+
+# 실행할 작업들
+jobs:
+  test-discord-connection:
+    runs-on: ubuntu-latest  # Ubuntu 리눅스 환경에서 실행
+    
+    steps:
+    # 1단계: 코드 다운로드
+    - name: 📥 코드 체크아웃
+      uses: actions/checkout@v4
+    
+    # 2단계: Python 설치
+    - name: 🐍 Python 설정
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    # 3단계: 필요한 패키지 설치
+    - name: 📦 패키지 설치
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    # 4단계: Discord 연결 테스트 실행
+    - name: 🤖 Discord 연결 테스트
+      env:
+        DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        CALENDAR_ID: ${{ secrets.CALENDAR_ID }}
+      run: |
+        echo "Discord 봇 연결 테스트를 시작합니다..."
+        python src/discord_collector.py
