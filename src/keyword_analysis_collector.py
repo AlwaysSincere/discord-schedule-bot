@@ -264,7 +264,7 @@ class KeywordAnalysisCollector(discord.Client):
                 # 더 광범위한 일정 관련 키워드 체크
                 broad_schedule_keywords = [
                     '합주', '리허설', '연습', '콘서트', '공연', '라이트', '더스트',
-                    '현실', '세팅', '사운드체크', '콜타임', '준비', '모임', '현합'
+                    '현실', '세팅', '사운드체크', '콜타임', '준비', '모임'
                 ]
                 
                 has_schedule_keyword = any(keyword in content_lower for keyword in broad_schedule_keywords)
@@ -409,15 +409,57 @@ class KeywordAnalysisCollector(discord.Client):
                 final_keywords.append(f"'{word}' (빈도:{freq}, 정확도:{ratio:.1f}배)")
         
         # 2. 기본 일정 키워드 (항상 포함)
-        core_keywords = ['합주', '리허설', '연습', '콘서트', '공연', '라이트', '더스트', '현실', '현합']
+        core_keywords = ['합주', '리허설', '연습', '콘서트', '공연', '라이트', '더스트', '현실']
         for keyword in core_keywords:
             if keyword in actual_words and actual_words[keyword] >= 5:
                 freq = actual_words[keyword]
                 final_keywords.append(f"'{keyword}' (핵심키워드:{freq}회)")
         
-        print('✅ 최종 추천 키워드:')
-        for i, keyword in enumerate(final_keywords[:12]):  # 상위 12개
+        print('✅ 최종 추천 키워드 (전체):')
+        for i, keyword in enumerate(final_keywords):  # 전체 출력 (제한 제거)
             print(f'   {i+1:2d}. {keyword}')
+        
+        # 추가 분석: 키워드를 카테고리별로 분류
+        print(f'\n📋 키워드 카테고리별 분류:')
+        print('=' * 70)
+        
+        core_schedule_words = []
+        time_related_words = []
+        team_related_words = []
+        misc_words = []
+        
+        for keyword in final_keywords:
+            # 키워드에서 실제 단어 추출 (따옴표와 설명 제거)
+            word = keyword.split("'")[1] if "'" in keyword else keyword
+            
+            if word in ['합주', '리허설', '연습', '콘서트', '공연', '세팅']:
+                core_schedule_words.append(keyword)
+            elif word in ['오늘', '내일', '이번', '언제', '시간']:
+                time_related_words.append(keyword)
+            elif word in ['라이트', '더스트', '현실', '저희', '우리']:
+                team_related_words.append(keyword)
+            else:
+                misc_words.append(keyword)
+        
+        if core_schedule_words:
+            print('🎯 핵심 일정 키워드:')
+            for keyword in core_schedule_words:
+                print(f'   • {keyword}')
+        
+        if time_related_words:
+            print('\n⏰ 시간 관련 키워드:')
+            for keyword in time_related_words:
+                print(f'   • {keyword}')
+        
+        if team_related_words:
+            print('\n👥 팀/그룹 관련 키워드:')
+            for keyword in team_related_words:
+                print(f'   • {keyword}')
+        
+        if misc_words:
+            print('\n📝 기타 키워드:')
+            for keyword in misc_words:
+                print(f'   • {keyword}')
         
         # 시간 패턴 분석
         print(f'\n🔍 시간 패턴 분석:')
