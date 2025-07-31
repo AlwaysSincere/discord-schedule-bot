@@ -1,5 +1,5 @@
-# Discord Schedule Bot - 키워드 분석 모드
-name: Keyword Analysis Mode
+# Discord Schedule Bot - 전체 시스템 실행
+name: Full Schedule Extraction
 
 # 언제 실행할지 설정
 on:
@@ -12,7 +12,7 @@ on:
 
 # 실행할 작업들
 jobs:
-  keyword-analysis:
+  full-schedule-extraction:
     runs-on: ubuntu-latest  # Ubuntu 리눅스 환경에서 실행
     
     steps:
@@ -32,15 +32,15 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
     
-    # 4단계: 키워드 분석 모드 실행 (OpenAI API 사용 안함)
-    - name: 🔍 키워드 분석 모드 실행
+    # 4단계: 전체 시스템 실행 (Discord → AI → Calendar)
+    - name: 🚀 일정 자동 추출 시스템 실행
       env:
         DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
         CALENDAR_ID: ${{ secrets.CALENDAR_ID }}
-        ANALYSIS_MODE: 'true'  # 키워드 분석만 실행
+        # ANALYSIS_MODE: 'true'  # 주석 처리로 전체 모드 활성화
       run: |
-        echo "키워드 분석 모드를 시작합니다 (OpenAI API 사용 안함)..."
+        echo "전체 일정 추출 시스템을 시작합니다 (Discord → AI → Calendar)..."
         cd src
         python main.py
