@@ -159,70 +159,114 @@ class MessageCollector(discord.Client):
         print(f'   ⏱️  예상 소요 시간: {total_estimated/1000:.1f}분')
         
         return channel_estimates, total_estimated
+async def collect_recent_messages_with_progress(self):
+    """진척도 표시가 개선된 메시지 수집 (진행 바 및 배치 처리 추가)"""
+    print(f'\n📥 개선된 메시지 수집을 시작합니다...')
     
-    async def collect_recent_messages_with_progress(self):
-        """진척도 표시가 개선된 메시지 수집"""
-        print(f'\n📥 개선된 메시지 수집을 시작합니다...')
+    # 1단계: 채널별 메시지 수 추정
+    channel_estimates, total_estimated = await self.estimate_channel_sizes()
+    
+    if total_estimated == 0:
+        print("❌ 수집할 메시지가 없습니다.")
+        return
+    
+    # 2단계: 실제 수집 시작
+    print(f'\n📥 실제 메시지 수집 시작...')
+    print(f'📊 예상 총량: {total_estimated:,}개')
+    
+    kst = pytz.timezone('Asia/Seoul')
+    now = datetime.now(kst)
+    sixty_days_ago = now - timedelta(days=60)
+    
+    total_processed = 0
+    total_filtered = 0
+    
+    for guild in self.guilds:
+        print(f'\n🏢 서버: {guild.name}')
         
-        # 1단계: 채널별 메시지 수 추정
-        channel_estimates, total_estimated = await self.estimate_channel_sizes()
+        guild_channels = [ch for ch in guild.text_channels 
+                         if ch.permissions_for(guild.me).read_message_history]
         
-        if total_estimated == 0:
-            print("❌ 수집할 메시지가 없습니다.")
-            return
-        
-        # 2단계: 실제 수집 시작
-        print(f'\n📥 실제 메시지 수집 시작...')
-        print(f'📊 예상 총량: {total_estimated:,}개')
-        
-        kst = pytz.timezone('Asia/Seoul')
-        now = datetime.now(kst)
-        sixty_days_ago = now - timedelta(days=60)
-        
-        total_processed = 0
-        total_filtered = 0
-        
-        for guild in self.guilds:
-            print(f'\n🏢 서버: {guild.name}')
+        for i, channel in enumerate(guild_channels):
+            channel_key = f"{guild.name}#{channel.name}"
+            estimated_for_channel = channel_estimates.get(channel_key, 0)
             
-            guild_channels = [ch for ch in guild.text_channels 
-                            if ch.permissions_for(guild.me).read_message_history]
+            print(f'  📝 [{i+1:2d}/{len(guild_channels):2d}] #{channel.name:<20s} ', end='')
+            print(f'(예상: {estimated_for_channel:,}개)')
             
-            for i, channel in enumerate(guild_channels):
-                channel_key = f"{guild.name}#{channel.name}"
-                estimated_for_channel = channel_estimates.get(channel_key, 0)
+            try:
+                channel_processed = 0
+                channel_filtered = 0
+                last_progress_update = 0
+                batch_size = 500  # 배치 크기 설정 (대량 채널 병목 완화)
+                batch_messages = []
+                start_time = datetime.now(kst)
                 
-                print(f'  📝 [{i+1:2d}/{len(guild_channels):2d}] #{channel.name:<20s} ', end='')
-                print(f'(예상: {estimated_for_channel:,}개) ', end='', flush=True)
-                
-                try:
-                    channel_processed = 0
-                    channel_filtered = 0
-                    last_progress_update = 0
+                # 메시지 수집 with 진행 바
+                async for message in channel.history(after=sixty_days_ago, limit=None):
+                    if message.author.bot:
+                        continue
                     
-                    # 메시지 수집 with 진척도 표시
-                    async for message in channel.history(after=sixty_days_ago, limit=None):
-                        if message.author.bot:
-                            continue
+                    total_processed += 1
+                    channel_processed += 1
+                    batch_messages.append(message)
+                    
+                    # 배치 단위로 처리
+                    if len(batch_messages) >= batch_size or channel_processed == estimated_for_channel:
+                        # 배치 내 메시지 필터링
+                        for message in batch_messages:
+                            is_schedule, reason = self.is_likely_schedule(message.content)
+                            
+                            if is_schedule:
+                                total_filtered += 1
+                                channel_filtered += 1
+                                
+                                # 메시지 정보 저장
+                                message_data = {
+                                    'id': message.id,
+                                    'content': message.content,
+                                    'author': str(message.author),
+                                    'channel': f'#{message.channel.name}',
+                                    'guild': message.guild.name,
+                                    'created_at': message.created_at.astimezone(kst),
+                                    'filter_reason': reason,
+                                    'message_length': len(message.content),
+                                }
+                                self.collected_messages.append(message_data)
                         
-                        total_processed += 1
-                        channel_processed += 1
+                        # 진행 바 및 상태 업데이트
+                        progress_pct = (channel_processed / estimated_for_channel * 100) if estimated_for_channel > 0 else 0
+                        bar_length = 20  # 진행 바 길이
+                        filled = int(bar_length * progress_pct / 100)
+                        bar = '=' * filled + '-' * (bar_length - filled)
                         
-                        # 진척도 표시 (1000개마다 또는 예상량의 25%마다)
-                        progress_interval = max(1000, estimated_for_channel // 4)
-                        if channel_processed - last_progress_update >= progress_interval:
-                            progress_pct = (channel_processed / estimated_for_channel * 100) if estimated_for_channel > 0 else 0
-                            print(f'\n    📈 진행: {channel_processed:,}/{estimated_for_channel:,} ({progress_pct:.0f}%) ', end='', flush=True)
-                            last_progress_update = channel_processed
+                        # 예상 남은 시간 계산
+                        elapsed_time = (datetime.now(kst) - start_time).total_seconds()
+                        if channel_processed > 0:
+                            time_per_message = elapsed_time / channel_processed
+                            remaining_messages = estimated_for_channel - channel_processed
+                            est_remaining_time = remaining_messages * time_per_message
+                        else:
+                            est_remaining_time = 0
                         
-                        # 필터링 적용
+                        # 진행 정보 출력
+                        print(f'\r    📈 [{bar}] {progress_pct:3.0f}% ({channel_processed:,}/{estimated_for_channel:,}) ', end='')
+                        print(f'| 필터: {channel_filtered:3d} ({(channel_filtered/channel_processed*100):.1f}%) ', end='')
+                        print(f'| 남은 시간: {est_remaining_time:.0f}s', flush=True)
+                        
+                        batch_messages = []  # 배치 초기화
+                        last_progress_update = channel_processed
+                        await asyncio.sleep(0.1)  # API 부하 방지
+                
+                # 마지막 배치 처리
+                if batch_messages:
+                    for message in batch_messages:
                         is_schedule, reason = self.is_likely_schedule(message.content)
                         
                         if is_schedule:
                             total_filtered += 1
                             channel_filtered += 1
                             
-                            # 메시지 정보 저장
                             message_data = {
                                 'id': message.id,
                                 'content': message.content,
@@ -235,32 +279,41 @@ class MessageCollector(discord.Client):
                             }
                             self.collected_messages.append(message_data)
                     
-                    # 채널 완료 결과
-                    filter_rate = f"{(channel_filtered/channel_processed*100):.1f}%" if channel_processed > 0 else "0%"
-                    print(f'\n    ✅ 완료: {channel_processed:,}개 → {channel_filtered:3d}개 ({filter_rate})')
-                    
-                    # 전체 진척도 표시
-                    overall_progress = (total_processed / total_estimated * 100) if total_estimated > 0 else 0
-                    print(f'    📊 전체 진척: {overall_progress:.1f}% ({total_processed:,}/{total_estimated:,})')
-                    
-                except discord.Forbidden:
-                    print('❌ 접근 권한 없음')
-                except Exception as e:
-                    print(f'❌ 오류: {str(e)[:50]}...')
-        
-        # 수집 완료 결과
-        print(f'\n📊 메시지 수집 완료!')
-        print('=' * 70)
-        print(f'   📥 실제 처리: {total_processed:,}개 (예상: {total_estimated:,}개)')
-        print(f'   🔍 필터링 결과: {total_filtered:,}개')
-        print(f'   📈 필터링 비율: {(total_filtered/total_processed*100):.2f}%' if total_processed > 0 else '   비율: 0%')
-        print(f'   🎯 AI 분석 예상 비용: 약 {((total_filtered + 14) // 15 * 5):,}원')
-        
-        # 맥락 묶기 처리
-        if self.collected_messages:
-            await self.group_context_messages()
-            print(f'   🔗 최종 AI 분석 대상: {len(self.collected_messages)}개 맥락 그룹')
+                    # 최종 진행 바 업데이트
+                    progress_pct = (channel_processed / estimated_for_channel * 100) if estimated_for_channel > 0 else 100
+                    bar_length = 20
+                    filled = int(bar_length * progress_pct / 100)
+                    bar = '=' * filled + '-' * (bar_length - filled)
+                    print(f'\r    📈 [{bar}] {progress_pct:3.0f}% ({channel_processed:,}/{estimated_for_channel:,}) ', end='')
+                    print(f'| 필터: {channel_filtered:3d} ({(channel_filtered/channel_processed*100):.1f}%) ', end='')
+                    print(f'| 완료', flush=True)
+                
+                # 채널 완료 결과
+                filter_rate = f"{(channel_filtered/channel_processed*100):.1f}%" if channel_processed > 0 else "0%"
+                print(f'    ✅ 완료: {channel_processed:,}개 → {channel_filtered:3d}개 ({filter_rate})')
+                
+                # 전체 진척도 표시
+                overall_progress = (total_processed / total_estimated * 100) if total_estimated > 0 else 0
+                print(f'    📊 전체 진척: {overall_progress:.1f}% ({total_processed:,}/{total_estimated:,})')
+                
+            except discord.Forbidden:
+                print('❌ 접근 권한 없음')
+            except Exception as e:
+                print(f'❌ 오류: {str(e)[:50]}...')
     
+    # 수집 완료 결과
+    print(f'\n📊 메시지 수집 완료!')
+    print('=' * 70)
+    print(f'   📥 실제 처리: {total_processed:,}개 (예상: {total_estimated:,}개)')
+    print(f'   🔍 필터링 결과: {total_filtered:,}개')
+    print(f'   📈 필터링 비율: {(total_filtered/total_processed*100):.2f}%' if total_processed > 0 else '   비율: 0%')
+    print(f'   🎯 AI 분석 예상 비용: 약 {((total_filtered + 14) // 15 * 5):,}원')
+    
+    # 맥락 묶기 처리
+    if self.collected_messages:
+        await self.group_context_messages()
+        print(f'   🔗 최종 AI 분석 대상: {len(self.collected_messages)}개 맥락 그룹')    
+
     async def group_context_messages(self):
         """맥락 묶기 처리 (기존과 동일하지만 async로 변경)"""
         print(f'\n🔗 맥락 묶기 처리 중...')
