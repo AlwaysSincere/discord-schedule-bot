@@ -8,19 +8,14 @@ import pytz
 class ScheduleClassifier:
     def __init__(self):
         """AI 일정 분류기 초기화"""
-        # OpenAI API 키 설정
+        # OpenAI API 키 설정 (v0.28.1 방식)
         api_key = os.getenv('OPENAI_API_KEY')
         if not api_key:
             raise ValueError("OPENAI_API_KEY 환경변수가 설정되지 않았습니다.")
         
-        # OpenAI 클라이언트 초기화 (버전 호환성 개선)
-        try:
-            self.client = openai.OpenAI(api_key=api_key)
-        except Exception as e:
-            print(f"OpenAI 클라이언트 초기화 실패: {e}")
-            # 이전 버전 호환성을 위한 대체 방법
-            openai.api_key = api_key
-            self.client = None
+        # v0.28.1 방식으로 API 키 설정
+        openai.api_key = api_key
+        print("✅ OpenAI API 키 설정 완료 (v0.28.1)")
         
         # 분류 결과 저장
         self.schedules = []
@@ -136,38 +131,26 @@ class ScheduleClassifier:
             print(f"📊 배치 {batch_num + 1}/{total_batches}: {len(batch_messages)}개 메시지 분석 중...")
             
             try:
-                # AI 분석 요청
+                # AI 분석 요청 (v0.28.1 방식)
                 prompt = self.create_classification_prompt(batch_messages)
                 
                 try:
-                    if self.client:
-                        # 새로운 클라이언트 방식
-                        response = self.client.chat.completions.create(
-                            model="gpt-3.5-turbo",
-                            messages=[
-                                {"role": "system", "content": "당신은 정확한 일정 분류 전문가입니다. 한국어 메시지를 분석하여 JSON 형식으로 응답해주세요."},
-                                {"role": "user", "content": prompt}
-                            ],
-                            temperature=0.1,  # 일관된 결과를 위해 낮게 설정
-                            max_tokens=2000
-                        )
-                        response_text = response.choices[0].message.content.strip()
-                    else:
-                        # 이전 방식 (호환성)
-                        response = openai.ChatCompletion.create(
-                            model="gpt-3.5-turbo",
-                            messages=[
-                                {"role": "system", "content": "당신은 정확한 일정 분류 전문가입니다. 한국어 메시지를 분석하여 JSON 형식으로 응답해주세요."},
-                                {"role": "user", "content": prompt}
-                            ],
-                            temperature=0.1,
-                            max_tokens=2000
-                        )
-                        response_text = response.choices[0].message.content.strip()
+                    # v0.28.1 방식으로 ChatCompletion 호출
+                    response = openai.ChatCompletion.create(
+                        model="gpt-3.5-turbo",
+                        messages=[
+                            {"role": "system", "content": "당신은 정확한 일정 분류 전문가입니다. 한국어 메시지를 분석하여 JSON 형식으로 응답해주세요."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        temperature=0.1,  # 일관된 결과를 위해 낮게 설정
+                        max_tokens=2000
+                    )
+                    
+                    response_text = response.choices[0].message.content.strip()
                     
                 except Exception as api_error:
                     print(f"  ❌ OpenAI API 호출 오류: {api_error}")
-                    print(f"     재시도하거나 다른 방식을 시도합니다...")
+                    print(f"     배치 {batch_num + 1} 건너뛰고 계속 진행합니다...")
                     continue
                 
                 # JSON 추출 (```json 태그 제거)
@@ -202,10 +185,18 @@ class ScheduleClassifier:
     
     def print_results(self):
         """분석 결과 출력"""
+        total_messages = len(self.schedules) + len(self.non_schedules)
+        
         print(f"\n🎯 AI 분석 완료!")
         print(f"   📅 일정으로 분류: {len(self.schedules)}개")
         print(f"   💬 일정 아님: {len(self.non_schedules)}개")
-        print(f"   📊 일정 비율: {len(self.schedules)/(len(self.schedules)+len(self.non_schedules))*100:.1f}%")
+        
+        # 0으로 나누기 방지
+        if total_messages > 0:
+            schedule_ratio = len(self.schedules) / total_messages * 100
+            print(f"   📊 일정 비율: {schedule_ratio:.1f}%")
+        else:
+            print(f"   📊 일정 비율: 0% (분석된 메시지 없음)")
         
         if self.schedules:
             print(f"\n📋 발견된 일정들:")
@@ -216,6 +207,8 @@ class ScheduleClassifier:
                 print(f"      📍 무엇: {schedule.get('extracted_info', {}).get('what', '미상')}")
                 print(f"      🎯 확신도: {schedule.get('confidence', 0):.2f}")
                 print()
+        else:
+            print(f"\n💡 일정으로 분류된 메시지가 없습니다.")
         
         if len(self.schedules) > 5:
             print(f"   ... 및 {len(self.schedules) - 5}개 추가 일정")
