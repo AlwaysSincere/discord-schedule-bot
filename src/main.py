@@ -42,6 +42,7 @@ async def main():
         print("🔍 키워드 분석 모드 - OpenAI API 사용하지 않음")
     else:
         print("🚀 전체 실행 모드 - Discord → AI → Calendar")
+        print("📊 대용량 테스트: 최근 10일간 데이터 수집 및 분석")
     
     # 한국 시간 설정
     kst = pytz.timezone('Asia/Seoul')
@@ -50,7 +51,7 @@ async def main():
     
     try:
         # 1단계: Discord 메시지 수집
-        print(f"\n📥 1단계: Discord 메시지 수집")
+        print(f"\n📥 1단계: Discord 메시지 수집 (10일치)")
         print("-" * 50)
         
         messages = await collect_discord_messages()
@@ -59,7 +60,14 @@ async def main():
             print("❌ 수집된 메시지가 없습니다. 프로그램을 종료합니다.")
             return
         
-        print(f"✅ {len(messages)}개 메시지 수집 완료!")
+        print(f"✅ {len(messages):,}개 맥락 그룹 수집 완료!")
+        
+        # 대용량 데이터 경고
+        if len(messages) > 200:
+            estimated_cost = (len(messages) + 14) // 15 * 5
+            print(f"⚠️  대용량 데이터 감지: {len(messages):,}개 그룹")
+            print(f"💰 예상 AI 분석 비용: 약 {estimated_cost:,}원")
+            print(f"⏱️  예상 분석 시간: 약 {len(messages)//15 * 0.5:.1f}분")
         
         # 분석 모드에서는 여기서 종료
         if analysis_mode:
