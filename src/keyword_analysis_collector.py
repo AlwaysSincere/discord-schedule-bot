@@ -31,7 +31,7 @@ class KeywordAnalysisCollector(discord.Client):
         # 실제 일정명들
         self.actual_schedule_names = [
             '라이트 합주', '더스트 합주', '라이트 현실합주', '더스트 현실합주',
-            '리허설', '콘서트'
+            '리허설', '콘서트', '현합'
         ]
     
     async def on_ready(self):
@@ -117,7 +117,7 @@ class KeywordAnalysisCollector(discord.Client):
         print(f'   🎯 다음 단계: 실제 일정 날짜와 매칭 분석')
     
     async def analyze_keywords(self):
-        """실제 일정 날짜와 메시지를 분석하여 키워드 추출"""
+        """모든 메시지를 분석하여 키워드 추출 (False Negative 방지)"""
         print(f'\n🔬 키워드 분석을 시작합니다...')
         print('=' * 70)
         
@@ -130,150 +130,295 @@ class KeywordAnalysisCollector(discord.Client):
             messages_by_date[date_str].append(msg)
         
         print(f'📅 분석 대상 날짜: {len(messages_by_date)}일')
-        print(f'📊 실제 일정 날짜: {len(self.actual_schedule_dates)}일')
+        print(f'📊 총 메시지: {len(self.all_messages):,}개')
+        print(f'🎯 실제 일정 날짜: {len(self.actual_schedule_dates)}일')
+        print(f'⚠️  False Negative 방지를 위해 모든 날짜 분석 (포괄적 접근)')
         
-        # 실제 일정 날짜의 메시지들 분석
+        # 모든 메시지를 대상으로 일정 관련 메시지 찾기
         schedule_related_messages = []
+        total_dates = len(messages_by_date)
+        processed_dates = 0
         
-        for schedule_date in self.actual_schedule_dates:
-            print(f'\n📅 {schedule_date} 분석 중...')
+        print(f'\n📊 전체 메시지 분석 진행중...')
+        
+        for date_str, date_messages in messages_by_date.items():
+            processed_dates += 1
             
-            # 해당 날짜와 전후 1일 메시지들 확인
-            target_dates = [
-                schedule_date,
-                (datetime.fromisoformat(schedule_date) - timedelta(days=1)).strftime('%Y-%m-%d'),
-                (datetime.fromisoformat(schedule_date) + timedelta(days=1)).strftime('%Y-%m-%d'),
-            ]
+            # 진행 상황 표시 (10% 단위로)
+            progress = (processed_dates / total_dates) * 100
+            if processed_dates % max(1, total_dates // 10) == 0 or processed_dates == total_dates:
+                print(f'   📈 진행률: {progress:.1f}% ({processed_dates}/{total_dates}일) - {date_str}')
             
-            date_messages = []
-            for target_date in target_dates:
-                if target_date in messages_by_date:
-                    date_messages.extend(messages_by_date[target_date])
+            # 실제 일정 날짜 여부 확인
+            is_actual_schedule_date = date_str in self.actual_schedule_dates
             
-            print(f'   📝 해당 기간 메시지: {len(date_messages)}개')
-            
-            # 일정명과 관련된 메시지 찾기
-            relevant_messages = []
+            # 각 날짜의 메시지들 분석
             for msg in date_messages:
                 content_lower = msg['content'].lower()
                 
-                # 일정명 직접 매칭
+                # 일정명 직접 매칭 (핵심 키워드)
+                matched_schedule = None
                 for schedule_name in self.actual_schedule_names:
                     if any(word in content_lower for word in schedule_name.lower().split()):
-                        relevant_messages.append({
-                            'message': msg,
-                            'matched_schedule': schedule_name,
-                            'match_reason': f'일정명 매칭: {schedule_name}'
-                        })
+                        matched_schedule = schedule_name
                         break
                 
-                # 시간 관련 키워드가 있는 메시지들도 수집
-                time_keywords = ['시', '분', '오전', '오후', '오늘', '내일', '언제', '몇시', '시간']
-                if any(keyword in content_lower for keyword in time_keywords):
-                    relevant_messages.append({
-                        'message': msg,
-                        'matched_schedule': '시간 관련',
-                        'match_reason': '시간 키워드 포함'
-                    })
-            
-            if relevant_messages:
-                print(f'   🎯 관련 메시지: {len(relevant_messages)}개 발견')
-                for rel_msg in relevant_messages[:3]:  # 상위 3개만 출력
-                    print(f'      💬 "{rel_msg["message"]["content"][:50]}..." ({rel_msg["match_reason"]})')
+                # 더 광범위한 일정 관련 키워드 체크
+                broad_schedule_keywords = [
+                    '합주', '리허설', '연습', '콘서트', '공연', '라이트', '더스트',
+                    '현실', '세팅', '사운드체크', '콜타임', '준비', '모임'
+                ]
                 
-                schedule_related_messages.extend(relevant_messages)
-            else:
-                print(f'   ⚠️  관련 메시지 없음')
+                has_schedule_keyword = any(keyword in content_lower for keyword in broad_schedule_keywords)
+                
+                # 시간 표현 더 정확하게 감지 (숫자+시 패턴)
+                time_patterns = [
+                    r'\d{1,2}시\s*\d{0,2}분?',  # "2시", "2시 30분"
+                    r'\d{1,2}:\d{2}',           # "14:30"
+                    r'오전|오후',                # "오전", "오후"
+                ]
+                
+                has_time_pattern = any(re.search(pattern, content_lower) for pattern in time_patterns)
+                
+                # 날짜/시간 키워드
+                time_keywords = ['오늘', '내일', '모레', '언제', '몇시', '시간', '이번주', '다음주']
+                has_time_keyword = any(keyword in content_lower for keyword in time_keywords)
+                
+                # 일정 관련 메시지 판단 (더 포괄적)
+                is_relevant = False
+                match_reasons = []
+                
+                if matched_schedule:
+                    is_relevant = True
+                    match_reasons.append(f'일정명: {matched_schedule}')
+                
+                if has_schedule_keyword and (has_time_pattern or has_time_keyword):
+                    is_relevant = True
+                    match_reasons.append('일정키워드+시간표현')
+                
+                if has_schedule_keyword and is_actual_schedule_date:
+                    is_relevant = True
+                    match_reasons.append('일정키워드+실제일정일')
+                
+                # 관련 메시지로 분류
+                if is_relevant:
+                    schedule_related_messages.append({
+                        'message': msg,
+                        'matched_schedule': matched_schedule or '일반 일정',
+                        'match_reasons': match_reasons,
+                        'is_actual_schedule_date': is_actual_schedule_date,
+                        'has_time_pattern': has_time_pattern,
+                        'has_schedule_keyword': has_schedule_keyword
+                    })
         
-        # 키워드 빈도 분석
+        print(f'\n✅ 전체 메시지 분석 완료!')
+        print(f'   📊 일정 관련 메시지: {len(schedule_related_messages):,}개')
+        print(f'   📈 전체 대비 비율: {(len(schedule_related_messages)/len(self.all_messages)*100):.2f}%')
+        
+        # 실제 일정 날짜 vs 기타 날짜 분석
+        actual_date_messages = [msg for msg in schedule_related_messages if msg['is_actual_schedule_date']]
+        other_date_messages = [msg for msg in schedule_related_messages if not msg['is_actual_schedule_date']]
+        
+        print(f'   🎯 실제 일정일 메시지: {len(actual_date_messages)}개')
+        print(f'   📅 기타 날짜 메시지: {len(other_date_messages)}개 (False Negative 후보)')
+        
+        return schedule_related_messages
+        
+        # 키워드 빈도 분석 (개선된 버전)
         print(f'\n📊 키워드 빈도 분석...')
         print('=' * 70)
         
-        word_frequency = {}
-        bigram_frequency = {}
+        # 실제 일정 관련 메시지들만 대상으로 키워드 추출
+        actual_schedule_messages = [msg for msg in schedule_related_messages if msg['is_actual_schedule_date']]
+        other_messages = [msg for msg in schedule_related_messages if not msg['is_actual_schedule_date']]
         
-        for rel_msg in schedule_related_messages:
-            content = rel_msg['message']['content'].lower()
+        print(f'🎯 실제 일정일 메시지 기준 키워드 분석: {len(actual_schedule_messages)}개')
+        print(f'📅 기타 날짜 메시지 (비교용): {len(other_messages)}개')
+        
+        # 두 그룹별로 키워드 빈도 분석
+        def analyze_word_frequency(messages, group_name):
+            word_frequency = {}
+            bigram_frequency = {}
             
-            # 단어 단위 분석 (한글, 영어, 숫자만)
-            words = re.findall(r'[가-힣a-z0-9]+', content)
+            print(f'\n📈 {group_name} 키워드 분석 중...')
+            total_msgs = len(messages)
             
-            for word in words:
-                if len(word) >= 2:  # 2글자 이상만
-                    word_frequency[word] = word_frequency.get(word, 0) + 1
+            for i, rel_msg in enumerate(messages):
+                # 진행 상황 표시
+                if i % max(1, total_msgs // 5) == 0 or i == total_msgs - 1:
+                    progress = (i + 1) / total_msgs * 100
+                    print(f'   ⏳ {group_name} 진행: {progress:.1f}% ({i+1}/{total_msgs})')
+                
+                content = rel_msg['message']['content'].lower()
+                
+                # 단어 단위 분석 (한글, 영어, 숫자만, 의미있는 단어만)
+                words = re.findall(r'[가-힣a-z0-9]+', content)
+                
+                # 불용어 제거 (의미없는 단어들)
+                stop_words = {
+                    '그', '이', '저', '것', '수', '있', '는', '다', '하', '을', '를', '가', '에',
+                    '와', '과', '도', '만', '까지', '부터', '으로', '로', '에서', '한테',
+                    '더', '너무', '정말', '진짜', '완전', '좀', '잠깐', '근데', '그런데',
+                    '아니', '네', '예', '응', '음', '어', '이제', '그냥', '일단', '하나',
+                    '둘', '셋', '넷', '다섯', '여섯', '일곱', '여덟', '아홉', '열'
+                }
+                
+                for word in words:
+                    if len(word) >= 2 and word not in stop_words:  # 2글자 이상, 불용어 제외
+                        word_frequency[word] = word_frequency.get(word, 0) + 1
+                
+                # 2글자 조합 분석 (의미있는 조합만)
+                for i in range(len(words) - 1):
+                    if words[i] not in stop_words and words[i+1] not in stop_words:
+                        bigram = f"{words[i]} {words[i+1]}"
+                        if len(bigram) >= 5:  # 너무 짧은 조합 제외
+                            bigram_frequency[bigram] = bigram_frequency.get(bigram, 0) + 1
             
-            # 2글자 조합 분석
-            for i in range(len(words) - 1):
-                bigram = f"{words[i]} {words[i+1]}"
-                bigram_frequency[bigram] = bigram_frequency.get(bigram, 0) + 1
+            return word_frequency, bigram_frequency
         
-        # 상위 키워드 출력
-        print(f'🔥 상위 단일 키워드 (빈도순):')
-        sorted_words = sorted(word_frequency.items(), key=lambda x: x[1], reverse=True)
-        for i, (word, freq) in enumerate(sorted_words[:20]):
-            print(f'   {i+1:2d}. {word:15s}: {freq:3d}회')
+        # 실제 일정일 메시지 분석
+        actual_words, actual_bigrams = analyze_word_frequency(actual_schedule_messages, "실제 일정일")
         
-        print(f'\n🔥 상위 조합 키워드 (빈도순):')
-        sorted_bigrams = sorted(bigram_frequency.items(), key=lambda x: x[1], reverse=True)
-        for i, (bigram, freq) in enumerate(sorted_bigrams[:15]):
-            print(f'   {i+1:2d}. "{bigram:20s}": {freq:3d}회')
+        # 기타 날짜 메시지 분석 (비교용)
+        other_words, other_bigrams = analyze_word_frequency(other_messages, "기타 날짜")
         
-        # 추천 키워드 생성
-        print(f'\n💡 추천 필터링 키워드:')
+        # 결과 출력
+        print(f'\n🔥 실제 일정일 상위 키워드 (빈도순):')
+        sorted_actual_words = sorted(actual_words.items(), key=lambda x: x[1], reverse=True)
+        for i, (word, freq) in enumerate(sorted_actual_words[:25]):
+            # 기타 날짜에서의 빈도와 비교
+            other_freq = other_words.get(word, 0)
+            ratio = freq / max(other_freq, 1)
+            print(f'   {i+1:2d}. {word:15s}: {freq:3d}회 (기타: {other_freq:3d}회, 비율: {ratio:.1f}x)')
+        
+        print(f'\n🔥 실제 일정일 상위 조합 키워드:')
+        sorted_actual_bigrams = sorted(actual_bigrams.items(), key=lambda x: x[1], reverse=True)
+        for i, (bigram, freq) in enumerate(sorted_actual_bigrams[:15]):
+            other_freq = other_bigrams.get(bigram, 0)
+            print(f'   {i+1:2d}. "{bigram:25s}": {freq:2d}회 (기타: {other_freq}회)')
+        
+        # 실제 일정일에만 높은 빈도로 나타나는 키워드 추출
+        high_precision_keywords = []
+        for word, freq in sorted_actual_words:
+            if freq >= 5:  # 최소 5회 이상
+                other_freq = other_words.get(word, 0)
+                ratio = freq / max(other_freq, 1)
+                if ratio >= 2.0:  # 실제 일정일에서 2배 이상 많이 나타남
+                    high_precision_keywords.append((word, freq, ratio))
+        
+        print(f'\n💎 고정밀도 일정 키워드 (실제 일정일 특화):')
+        for i, (word, freq, ratio) in enumerate(high_precision_keywords[:15]):
+            print(f'   {i+1:2d}. "{word}" - {freq}회, {ratio:.1f}배 차이')
+        
+        # 최종 추천 키워드 생성
+        print(f'\n💡 최종 추천 필터링 키워드:')
         print('=' * 70)
         
-        recommended_keywords = []
+        # 기존 분석 결과와 새로운 고정밀도 키워드 결합
+        final_keywords = []
         
-        # 빈도 기반 추천 (상위 키워드 중 일정 관련성 높은 것들)
-        schedule_related_words = ['합주', '리허설', '연습', '콘서트', '공연', '라이트', '더스트', '현실']
+        # 1. 고빈도 + 고정밀도 키워드
+        for word, freq, ratio in high_precision_keywords:
+            if freq >= 10:  # 충분한 빈도
+                final_keywords.append(f"'{word}' (빈도:{freq}, 정확도:{ratio:.1f}배)")
         
-        for word, freq in sorted_words[:30]:
-            if (word in schedule_related_words or 
-                freq >= 5 and any(s_word in word for s_word in schedule_related_words)):
-                recommended_keywords.append(f"'{word}' ({freq}회)")
+        # 2. 기본 일정 키워드 (항상 포함)
+        core_keywords = ['합주', '리허설', '연습', '콘서트', '공연', '라이트', '더스트', '현실']
+        for keyword in core_keywords:
+            if keyword in actual_words and actual_words[keyword] >= 5:
+                freq = actual_words[keyword]
+                final_keywords.append(f"'{keyword}' (핵심키워드:{freq}회)")
         
-        print('✅ 고빈도 일정 관련 키워드:')
-        for keyword in recommended_keywords[:10]:
-            print(f'   • {keyword}')
+        print('✅ 최종 추천 키워드:')
+        for i, keyword in enumerate(final_keywords[:12]):  # 상위 12개
+            print(f'   {i+1:2d}. {keyword}')
         
-        # 패턴 분석
-        print(f'\n🔍 메시지 패턴 분석:')
+        return schedule_related_messages
+        
+        # 시간 패턴 분석 (개선된 정확도)
+        print(f'\n🔍 시간 패턴 분석 (정확도 개선):')
         print('=' * 70)
         
         time_patterns = []
+        time_context_messages = []
+        
         for rel_msg in schedule_related_messages:
             content = rel_msg['message']['content']
+            content_lower = content.lower()
             
-            # 시간 패턴 찾기
-            time_matches = re.findall(r'\d{1,2}시\s*\d{0,2}분?|\d{1,2}:\d{2}|오전|오후', content)
-            if time_matches:
-                time_patterns.extend(time_matches)
+            # 더 정확한 시간 패턴 찾기 (숫자와 함께)
+            precise_time_patterns = [
+                r'\d{1,2}시\s*\d{0,2}분?',  # "2시", "2시 30분", "14시 20분"
+                r'\d{1,2}:\d{2}',           # "14:30", "9:15"
+                r'오전\s*\d{1,2}시?',       # "오전 9시", "오전 9"
+                r'오후\s*\d{1,2}시?',       # "오후 3시", "오후 3"
+                r'\d{1,2}시\s*반',          # "2시 반"
+                r'\d{1,2}시경',             # "3시경"
+            ]
+            
+            found_patterns = []
+            for pattern in precise_time_patterns:
+                matches = re.findall(pattern, content_lower)
+                found_patterns.extend(matches)
+            
+            if found_patterns:
+                time_patterns.extend(found_patterns)
+                time_context_messages.append({
+                    'message': rel_msg['message'],
+                    'patterns': found_patterns,
+                    'is_actual_date': rel_msg['is_actual_schedule_date']
+                })
         
-        # 시간 패턴 빈도
+        # 시간 패턴 빈도 분석
         time_pattern_freq = {}
         for pattern in time_patterns:
-            time_pattern_freq[pattern] = time_pattern_freq.get(pattern, 0) + 1
+            # 패턴 정규화 (예: "9시", "09시" -> "9시")
+            normalized = re.sub(r'0(\d)', r'\1', pattern)
+            time_pattern_freq[normalized] = time_pattern_freq.get(normalized, 0) + 1
         
-        print('⏰ 발견된 시간 패턴:')
-        for pattern, freq in sorted(time_pattern_freq.items(), key=lambda x: x[1], reverse=True)[:10]:
-            print(f'   • "{pattern}": {freq}회')
+        print('⏰ 발견된 정확한 시간 패턴:')
+        sorted_time_patterns = sorted(time_pattern_freq.items(), key=lambda x: x[1], reverse=True)
+        for i, (pattern, freq) in enumerate(sorted_time_patterns[:15]):
+            print(f'   {i+1:2d}. "{pattern}": {freq}회')
         
-        # 결과 JSON 저장 (로컬 개발용)
-        analysis_result = {
-            'total_messages': len(self.all_messages),
-            'schedule_related_messages': len(schedule_related_messages),
-            'top_keywords': sorted_words[:30],
-            'top_bigrams': sorted_bigrams[:20],
-            'recommended_keywords': recommended_keywords,
-            'time_patterns': list(time_pattern_freq.items()),
-            'actual_schedule_dates': self.actual_schedule_dates
-        }
+        # 시간이 언급된 메시지 샘플 출력
+        print(f'\n⏰ 시간 패턴이 포함된 메시지 샘플:')
+        actual_time_msgs = [msg for msg in time_context_messages if msg['is_actual_date']][:5]
+        other_time_msgs = [msg for msg in time_context_messages if not msg['is_actual_date']][:3]
         
-        print(f'\n📋 키워드 분석 완료!')
-        print(f'   📊 총 메시지: {len(self.all_messages):,}개')
-        print(f'   🎯 일정 관련: {len(schedule_related_messages)}개')
-        print(f'   🔥 추천 키워드: {len(recommended_keywords)}개')
-        print(f'   ⏰ 시간 패턴: {len(time_pattern_freq)}개')
+        print(f'   🎯 실제 일정일 메시지 ({len(actual_time_msgs)}개 샘플):')
+        for i, msg in enumerate(actual_time_msgs):
+            content = msg['message']['content'][:60]
+            patterns = ', '.join(msg['patterns'])
+            print(f'      {i+1}. "{content}..." → [{patterns}]')
+        
+        print(f'   📅 기타 날짜 메시지 ({len(other_time_msgs)}개 샘플):')
+        for i, msg in enumerate(other_time_msgs):
+            content = msg['message']['content'][:60]
+            patterns = ', '.join(msg['patterns'])
+            print(f'      {i+1}. "{content}..." → [{patterns}]')
+        
+        # 최종 분석 결과 요약
+        print(f'\n📋 키워드 분석 최종 요약:')
+        print('=' * 70)
+        print(f'   📊 총 메시지: {len(self.all_messages):,}개 (2개월)')
+        print(f'   🎯 일정 관련 메시지: {len(schedule_related_messages):,}개')
+        print(f'   📅 실제 일정일 메시지: {len(actual_schedule_messages)}개')
+        print(f'   📅 기타 날짜 메시지: {len(other_messages)}개 (False Negative 후보)')
+        print(f'   🔥 고정밀도 키워드: {len(high_precision_keywords)}개')
+        print(f'   ⏰ 정확한 시간 패턴: {len(time_pattern_freq)}개')
+        print(f'   💎 최종 추천 키워드: {len(final_keywords)}개')
+        
+        # 개선 제안
+        print(f'\n💡 다음 단계 제안:')
+        print('=' * 70)
+        print('1. 🎯 위 "최종 추천 키워드"를 기존 필터링에 적용')
+        print('2. 📅 "기타 날짜 메시지"를 검토하여 놓친 일정 확인')
+        print('3. 🔧 시간 패턴을 활용한 정확도 개선')
+        print('4. 🧪 개선된 필터링으로 소규모 테스트')
+        print('5. 🚀 최종 시스템으로 전면 테스트')
+        
+        return schedule_related_messages
 
 async def analyze_discord_keywords():
     """Discord 키워드 분석 메인 함수"""
