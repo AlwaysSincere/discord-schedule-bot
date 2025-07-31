@@ -21,6 +21,14 @@ except ImportError:
     AI_AVAILABLE = False
     print("⚠️  AI 모듈 import 실패 - 키워드 분석 모드에서만 실행 가능")
 
+# Calendar 모듈은 조건부 import
+try:
+    from calendar_manager import add_schedules_to_google_calendar
+    CALENDAR_AVAILABLE = True
+except ImportError:
+    CALENDAR_AVAILABLE = False
+    print("⚠️  Calendar 모듈 import 실패 - 캘린더 연동 불가")
+
 async def main():
     """메인 실행 함수"""
     print("=" * 70)
@@ -76,26 +84,41 @@ async def main():
             print("💡 키워드나 분류 기준을 조정해볼 수 있습니다.")
             return
         
-        print(f"✅ {len(schedules)}개 일정 발견!")
+        # 발견된 일정들 상세 출력 (캘린더 연동 전에)
+        if schedules:
+            print(f"\n📋 발견된 일정들 상세:")
+            for i, schedule in enumerate(schedules):
+                print(f"\n   📅 일정 #{i+1}:")
+                print(f"      💬 내용: {schedule.get('content', '')}")
+                print(f"      👤 작성자: {schedule.get('author', '')}")
+                print(f"      📝 채널: {schedule.get('channel', '')}")
+                print(f"      🎯 유형: {schedule.get('schedule_type', 'Unknown')}")
+                print(f"      🕐 언제: {schedule.get('extracted_info', {}).get('when', '미상')}")
+                print(f"      📍 내용: {schedule.get('extracted_info', {}).get('what', '미상')}")
+                print(f"      📍 장소: {schedule.get('extracted_info', {}).get('where', '미상')}")
+                print(f"      🎯 확신도: {schedule.get('confidence', 0):.1%}")
+                print(f"      💭 이유: {schedule.get('reason', '')}")
         
-        # 3단계: Google Calendar 연동 (다음에 구현 예정)
+        # 3단계: Google Calendar 연동
         print(f"\n📅 3단계: Google Calendar 연동")
         print("-" * 50)
-        print("🚧 Google Calendar 연동 기능은 다음 단계에서 구현 예정입니다.")
-        print("📋 현재까지 발견된 일정들:")
         
-        # 발견된 일정들 상세 출력
-        for i, schedule in enumerate(schedules):
-            print(f"\n   📅 일정 #{i+1}:")
-            print(f"      💬 내용: {schedule.get('content', '')}")
-            print(f"      👤 작성자: {schedule.get('author', '')}")
-            print(f"      📝 채널: {schedule.get('channel', '')}")
-            print(f"      🎯 유형: {schedule.get('schedule_type', 'Unknown')}")
-            print(f"      🕐 언제: {schedule.get('extracted_info', {}).get('when', '미상')}")
-            print(f"      📍 내용: {schedule.get('extracted_info', {}).get('what', '미상')}")
-            print(f"      📍 장소: {schedule.get('extracted_info', {}).get('where', '미상')}")
-            print(f"      🎯 확신도: {schedule.get('confidence', 0):.1%}")
-            print(f"      💭 이유: {schedule.get('reason', '')}")
+        if not CALENDAR_AVAILABLE:
+            print("❌ Calendar 모듈을 불러올 수 없습니다.")
+            print("💡 calendar_manager.py 파일을 확인해주세요.")
+        elif not schedules:
+            print("📝 캘린더에 추가할 일정이 없습니다.")
+        else:
+            print(f"📅 {len(schedules)}개 일정을 Google Calendar에 추가합니다...")
+            
+            calendar_success = await add_schedules_to_google_calendar(schedules)
+            
+            if calendar_success:
+                print(f"✅ Google Calendar 연동 완료!")
+                print(f"🔗 확인: https://calendar.google.com")
+            else:
+                print(f"❌ Google Calendar 연동 실패")
+                print(f"💡 Google 인증 정보와 캘린더 ID를 확인해주세요.")
         
         # 실행 완료 정보
         end_time = datetime.now(kst)
@@ -162,6 +185,13 @@ def check_environment():
         return False
     
     print(f"✅ 필요한 환경 변수가 모두 설정되었습니다.")
+    
+    # 전체 모드에서 추가 확인
+    if not analysis_mode:
+        print(f"🔧 모듈 가용성 확인:")
+        print(f"   AI 분류: {'✅ 사용 가능' if AI_AVAILABLE else '❌ 불가능'}")
+        print(f"   Calendar 연동: {'✅ 사용 가능' if CALENDAR_AVAILABLE else '❌ 불가능'}")
+    
     return True
 
 if __name__ == "__main__":
