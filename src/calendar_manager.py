@@ -1,6 +1,7 @@
 import os
 import json
 import pytz
+import re
 from datetime import datetime, timedelta
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -12,6 +13,7 @@ class CalendarManager:
         self.service = None
         self.calendar_id = os.getenv('CALENDAR_ID')
         self.kst = pytz.timezone('Asia/Seoul')
+        self.added_events = set()  # 중복 방지용 세트
         
         # Google 서비스 계정 인증
         self.authenticate()
@@ -45,8 +47,53 @@ class CalendarManager:
             print(f"❌ Google Calendar 인증 실패: {e}")
             raise
     
+    def extract_time_from_text(self, when_text, created_at):
+        """텍스트에서 구체적인 시간 정보 추출 (개선된 버전)"""
+        when_text = when_text.lower().strip()
+        
+        # 시간 패턴 매칭 (더 정확한 정규식 사용)
+        time_patterns = [
+            r'(\d{1,2})시\s*(\d{1,2})분',  # "2시 20분"
+            r'(\d{1,2})시',               # "8시"
+            r'(\d{1,2}):(\d{2})',         # "14:30"
+            r'오전\s*(\d{1,2})시',        # "오전 9시"
+            r'오후\s*(\d{1,2})시',        # "오후 3시"
+        ]
+        
+        for pattern in time_patterns:
+            match = re.search(pattern, when_text)
+            if match:
+                if '시' in pattern and '분' in pattern:
+                    # "2시 20분" 형태
+                    hour = int(match.group(1))
+                    minute = int(match.group(2))
+                elif ':' in pattern:
+                    # "14:30" 형태
+                    hour = int(match.group(1))
+                    minute = int(match.group(2))
+                elif '오전' in when_text:
+                    # "오전 9시" 형태
+                    hour = int(match.group(1))
+                    minute = 0
+                elif '오후' in when_text:
+                    # "오후 3시" 형태
+                    hour = int(match.group(1)) + 12
+                    minute = 0
+                else:
+                    # "8시" 형태 (오후로 가정, 단 새벽 시간대는 그대로)
+                    hour = int(match.group(1))
+                    minute = 0
+                    if hour <= 6:  # 새벽 6시 이전은 그대로
+                        pass
+                    elif hour <= 12:  # 7시~12시는 오후로 가정
+                        hour += 12
+                
+                return hour, minute
+        
+        return None, None
+    
     def parse_schedule_time(self, schedule):
-        """일정 시간 정보를 파싱하여 datetime 객체 생성"""
+        """일정 시간 정보를 파싱하여 datetime 객체 생성 (개선된 버전)"""
         when_text = schedule.get('extracted_info', {}).get('when', '').lower()
         created_at = schedule.get('created_at')
         
@@ -57,49 +104,95 @@ class CalendarManager:
         else:
             base_time = created_at.astimezone(self.kst) if created_at else datetime.now(self.kst)
         
-        # 시간 표현 파싱
-        start_time = None
-        end_time = None
+        # 구체적인 시간 추출 시도
+        extracted_hour, extracted_minute = self.extract_time_from_text(when_text, created_at)
+        
+        # 날짜 결정
+        target_date = None
+        default_hour = 6  # 시간이 불명확할 때 오전 6시 (기존 오후 6시에서 변경)
+        default_minute = 0
         
         if '오늘' in when_text or 'today' in when_text:
-            # 오늘 일정
             target_date = base_time.date()
+            print(f"      📅 날짜: 오늘 ({target_date})")
             
-            if '8시' in when_text or '8인가' in when_text:
-                start_time = datetime.combine(target_date, datetime.min.time().replace(hour=20))  # 오후 8시로 가정
-            elif '9시' in when_text:
-                start_time = datetime.combine(target_date, datetime.min.time().replace(hour=21))  # 오후 9시로 가정
-            else:
-                # 구체적 시간이 없으면 오후 6시로 기본 설정
-                start_time = datetime.combine(target_date, datetime.min.time().replace(hour=18))
-                
         elif '내일' in when_text or 'tomorrow' in when_text:
-            # 내일 일정
             target_date = (base_time + timedelta(days=1)).date()
-            start_time = datetime.combine(target_date, datetime.min.time().replace(hour=18))  # 기본 오후 6시
+            print(f"      📅 날짜: 내일 ({target_date})")
+            
+        elif '모레' in when_text:
+            target_date = (base_time + timedelta(days=2)).date()
+            print(f"      📅 날짜: 모레 ({target_date})")
+            
+        elif '이번주' in when_text or 'this week' in when_text:
+            # 이번 주 일요일로 설정 (주간 일정 점검용)
+            days_until_sunday = (6 - base_time.weekday()) % 7
+            if days_until_sunday == 0:  # 오늘이 일요일이면 다음 일요일
+                days_until_sunday = 7
+            target_date = (base_time + timedelta(days=days_until_sunday)).date()
+            print(f"      📅 날짜: 이번 주 일요일 ({target_date})")
             
         elif '다음주' in when_text or 'next week' in when_text:
-            # 다음주 일정 (월요일로 설정)
-            days_ahead = 7 - base_time.weekday()  # 다음 월요일까지의 일수
-            target_date = (base_time + timedelta(days=days_ahead)).date()
-            start_time = datetime.combine(target_date, datetime.min.time().replace(hour=18))
+            # 다음 주 일요일로 설정
+            days_until_next_sunday = (6 - base_time.weekday()) % 7 + 7
+            target_date = (base_time + timedelta(days=days_until_next_sunday)).date()
+            print(f"      📅 날짜: 다음 주 일요일 ({target_date})")
             
         else:
-            # 시간 정보가 없으면 메시지 작성 시간 기준으로 내일 오후 6시
+            # 구체적인 날짜가 없으면 내일로 설정
             target_date = (base_time + timedelta(days=1)).date()
-            start_time = datetime.combine(target_date, datetime.min.time().replace(hour=18))
+            print(f"      📅 날짜: 구체적 언급 없음 → 내일 ({target_date})")
         
-        # 시간대 설정
-        if start_time:
+        # 시간 설정
+        if extracted_hour is not None and extracted_minute is not None:
+            # 구체적인 시간이 추출된 경우
+            final_hour = extracted_hour
+            final_minute = extracted_minute
+            print(f"      🕐 시간: 추출됨 → {final_hour:02d}:{final_minute:02d}")
+        else:
+            # 시간이 불명확한 경우 기본값 사용
+            final_hour = default_hour
+            final_minute = default_minute
+            print(f"      🕐 시간: 불명확 → 기본값 {final_hour:02d}:{final_minute:02d}")
+        
+        # 최종 datetime 객체 생성
+        try:
+            start_time = datetime.combine(target_date, datetime.min.time().replace(
+                hour=final_hour, minute=final_minute
+            ))
             start_time = self.kst.localize(start_time)
-            # 기본 1시간 일정으로 설정
+            
+            # 종료 시간 (1시간 후)
             end_time = start_time + timedelta(hours=1)
+            
+            print(f"      ✅ 최종 시간: {start_time.strftime('%Y-%m-%d %H:%M')} ~ {end_time.strftime('%H:%M')}")
+            
+            return start_time, end_time
+            
+        except ValueError as e:
+            print(f"      ❌ 시간 생성 오류: {e}")
+            return None, None
+    
+    def create_event_hash(self, schedule):
+        """중복 체크를 위한 일정 해시 생성"""
+        # 메시지 내용, 작성자, 시간을 조합하여 고유한 해시 생성
+        content = schedule.get('content', '')[:100]  # 내용 일부만 사용
+        author = schedule.get('author', '')
+        created_at = schedule.get('created_at', '')
         
-        return start_time, end_time
+        # 간단한 해시 생성 (중복 방지용)
+        hash_str = f"{content}_{author}_{created_at}"
+        return hash(hash_str)
     
     def create_event_from_schedule(self, schedule):
         """일정 정보를 바탕으로 Google Calendar 이벤트 생성"""
         try:
+            # 중복 체크
+            event_hash = self.create_event_hash(schedule)
+            if event_hash in self.added_events:
+                print(f"  ⚠️ 중복 일정 건너뛰기: {schedule.get('content', '')[:50]}...")
+                return None
+            
             # 시간 파싱
             start_time, end_time = self.parse_schedule_time(schedule)
             
@@ -117,21 +210,27 @@ class CalendarManager:
             else:
                 title = f"[{schedule_type}] Discord 일정"
             
-            # 이벤트 설명 생성
+            # 이벤트 설명 생성 (더 상세하게)
+            when_info = schedule.get('extracted_info', {}).get('when', '미상')
+            where_info = schedule.get('extracted_info', {}).get('where', '미상')
+            confidence = schedule.get('confidence', 0)
+            
             description = f"""Discord에서 자동 추출된 일정
 
-원본 메시지: "{schedule.get('content', '')}"
-작성자: {author}
-채널: {schedule.get('channel', 'Unknown')}
-작성 시간: {schedule.get('created_at', 'Unknown')}
-확신도: {schedule.get('confidence', 0):.1%}
+📝 원본 메시지: "{schedule.get('content', '')}"
+👤 작성자: {author}
+📍 채널: {schedule.get('channel', 'Unknown')}
+🕐 작성 시간: {schedule.get('created_at', 'Unknown')}
+🎯 확신도: {confidence:.1%}
 
-추출된 정보:
-- 언제: {schedule.get('extracted_info', {}).get('when', '미상')}
-- 무엇: {schedule.get('extracted_info', {}).get('what', '미상')}
-- 어디서: {schedule.get('extracted_info', {}).get('where', '미상')}
+📊 추출된 정보:
+• 언제: {when_info}
+• 무엇: {schedule.get('extracted_info', {}).get('what', '미상')}
+• 어디서: {where_info}
 
-분류 이유: {schedule.get('reason', '없음')}
+💭 분류 이유: {schedule.get('reason', '없음')}
+
+🤖 자동 생성된 일정입니다. 정확성을 확인해주세요.
 """
             
             # Google Calendar 이벤트 객체 생성
@@ -151,7 +250,17 @@ class CalendarManager:
                     'url': 'https://github.com/AlwaysSincere/discord-schedule-bot'
                 },
                 'colorId': '9',  # 파란색으로 설정 (Discord 색상)
+                'reminders': {
+                    'useDefault': False,
+                    'overrides': [
+                        {'method': 'popup', 'minutes': 30},  # 30분 전 알림
+                        {'method': 'popup', 'minutes': 10},  # 10분 전 알림
+                    ],
+                },
             }
+            
+            # 중복 방지를 위해 해시 저장
+            self.added_events.add(event_hash)
             
             return event
             
@@ -170,18 +279,27 @@ class CalendarManager:
             return
         
         print(f"📅 {len(schedules)}개 일정을 Google Calendar에 추가합니다...")
+        print("=" * 70)
         
         added_count = 0
         failed_count = 0
+        skipped_count = 0
         
         for i, schedule in enumerate(schedules):
-            print(f"\n  📝 일정 {i+1}/{len(schedules)}: {schedule.get('content', '')[:50]}...")
+            print(f"\n📝 일정 {i+1}/{len(schedules)}: {schedule.get('content', '')[:50]}...")
+            print(f"   👤 작성자: {schedule.get('author', 'Unknown')}")
+            print(f"   🎯 AI 추출 시간: {schedule.get('extracted_info', {}).get('when', '미상')}")
             
             try:
                 # 이벤트 생성
                 event = self.create_event_from_schedule(schedule)
                 if not event:
-                    failed_count += 1
+                    if self.create_event_hash(schedule) in self.added_events:
+                        skipped_count += 1
+                        print(f"      ⏭️ 중복으로 건너뛰기")
+                    else:
+                        failed_count += 1
+                        print(f"      ❌ 이벤트 생성 실패")
                     continue
                 
                 # Google Calendar에 이벤트 추가
@@ -191,29 +309,37 @@ class CalendarManager:
                 ).execute()
                 
                 # 결과 출력
-                start_time = created_event['start'].get('dateTime', created_event['start'].get('date'))
-                print(f"     ✅ 추가 완료: {event['summary']}")
-                print(f"     🕐 시간: {start_time}")
-                print(f"     🔗 링크: {created_event.get('htmlLink', 'N/A')}")
+                start_time_str = created_event['start'].get('dateTime', created_event['start'].get('date'))
+                print(f"      ✅ 캘린더 추가 완료!")
+                print(f"      📅 제목: {event['summary']}")
+                print(f"      🕐 시간: {start_time_str}")
+                print(f"      🔗 링크: {created_event.get('htmlLink', 'N/A')}")
                 
                 added_count += 1
                 
             except HttpError as http_error:
-                print(f"     ❌ Google API 오류: {http_error}")
+                print(f"      ❌ Google API 오류: {http_error}")
                 failed_count += 1
                 
             except Exception as e:
-                print(f"     ❌ 예상치 못한 오류: {e}")
+                print(f"      ❌ 예상치 못한 오류: {e}")
                 failed_count += 1
         
         # 최종 결과
-        print(f"\n📊 캘린더 추가 완료!")
+        print(f"\n" + "=" * 70)
+        print(f"📊 캘린더 추가 완료!")
         print(f"   ✅ 성공: {added_count}개")
+        print(f"   ⏭️ 중복 건너뛰기: {skipped_count}개")
         print(f"   ❌ 실패: {failed_count}개")
+        print(f"   📊 총 처리: {len(schedules)}개")
         
+        if len(schedules) > 0:
+            success_rate = (added_count / len(schedules)) * 100
+            print(f"   🎯 성공률: {success_rate:.1f}%")
+            
         if added_count > 0:
-            print(f"   🎯 성공률: {added_count/len(schedules)*100:.1f}%")
             print(f"   📅 Google Calendar에서 확인하세요: https://calendar.google.com")
+            print(f"   🔔 알림: 30분 전, 10분 전 팝업 알림이 설정되었습니다.")
 
 async def add_schedules_to_google_calendar(schedules):
     """일정들을 Google Calendar에 추가하는 메인 함수"""
@@ -231,36 +357,3 @@ async def add_schedules_to_google_calendar(schedules):
     except Exception as e:
         print(f"❌ Google Calendar 연동 실패: {e}")
         return False
-
-# 테스트용 메인 함수
-if __name__ == "__main__":
-    print("=" * 60)
-    print("📅 Google Calendar Manager - 테스트")
-    print("=" * 60)
-    
-    # 샘플 일정으로 테스트
-    sample_schedules = [
-        {
-            'id': 'test_1',
-            'content': '오늘합주는8시 그대로 하죠?',
-            'author': 'happyme_1009',
-            'channel': '#💬잡담',
-            'created_at': datetime.now(pytz.timezone('Asia/Seoul')),
-            'schedule_type': '합주',
-            'confidence': 0.95,
-            'extracted_info': {
-                'when': '오늘 8시',
-                'what': '합주',
-                'where': '연습실'
-            },
-            'reason': '구체적인 시간과 활동이 명시됨'
-        }
-    ]
-    
-    import asyncio
-    
-    async def test():
-        success = await add_schedules_to_google_calendar(sample_schedules)
-        print(f"\n🎯 테스트 결과: {'성공' if success else '실패'}")
-    
-    asyncio.run(test())# Google Calendar manager
