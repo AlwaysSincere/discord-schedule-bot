@@ -71,7 +71,7 @@ async def main():
         print("   → Discord 메시지 수집 및 필터링 품질 분석만 수행")
     else:
         print("🚀 전체 실행 모드 - Discord → AI → Calendar")
-        print("   → 10일간 데이터 수집 → AI 분류 (개선된 정확도) → 캘린더 연동")
+        print("   → 60일간 데이터 수집 → AI 분류 (개선된 정확도) → 캘린더 연동")
     
     # 한국 시간 설정
     kst = pytz.timezone('Asia/Seoul')
@@ -81,7 +81,7 @@ async def main():
     try:
         # 1단계: Discord 메시지 수집
         print(f"\n" + "=" * 70)
-        print(f"📥 1단계: Discord 메시지 수집 (개선된 필터링)")
+        print(f"📥 1단계: Discord 메시지 수집 (60일 대용량 테스트)")
         print("=" * 70)
         
         messages = await collect_discord_messages()
@@ -91,7 +91,7 @@ async def main():
             print("💡 가능한 원인:")
             print("   • Discord 토큰이 잘못됨")
             print("   • 봇이 서버에 없거나 권한이 부족함")
-            print("   • 최근 10일간 일정 관련 메시지가 없음")
+            print("   • 최근 60일간 일정 관련 메시지가 없음")
             print("   • 필터링 기준이 너무 엄격함")
             return
         
@@ -184,11 +184,12 @@ async def main():
         print(f"🕐 종료: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"⏱️  소요: {duration.total_seconds():.1f}초 ({duration.total_seconds()/60:.1f}분)")
         
-        print(f"\n📊 최종 성과:")
-        print(f"   📥 수집된 메시지: {len(messages):,}개 그룹")
+        print(f"\n📊 최종 성과 (60일 대용량 분석):")
+        print(f"   📥 수집된 메시지: {len(messages):,}개 그룹 (60일간)")
         print(f"   🤖 AI 분석 완료: {total_analyzed:,}개")
         print(f"   📅 발견된 일정: {len(schedules)}개")
         print(f"   📈 전체 성공률: {(len(schedules)/len(messages)*100):.1f}%")
+        print(f"   🎯 2달 데이터로 더 다양한 패턴 분석 완료!")
         
         if len(schedules) > 0:
             print(f"\n🎯 추출된 일정 요약:")
