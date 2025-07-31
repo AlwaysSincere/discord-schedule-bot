@@ -80,20 +80,30 @@ class CalendarManager:
                     hour = int(match.group(1)) + 12
                     minute = 0
                 else:
-                    # "8시" 형태 (오후로 가정, 단 새벽 시간대는 그대로)
+                    # "8시" 형태 (맥락에 따라 처리)
                     hour = int(match.group(1))
                     minute = 0
-                    if hour <= 6:  # 새벽 6시 이전은 그대로
-                        pass
-                    elif hour <= 12:  # 7시~12시는 오후로 가정
-                        hour += 12
+                    
+                    # 시간대별 추론 로직
+                    if hour <= 6:  # 1-6시는 새벽으로 가정
+                        pass  # 그대로 유지
+                    elif hour <= 12:  # 7-12시
+                        if '밤' in when_text or '저녁' in when_text:
+                            hour += 12
+                        # 아침/점심 시간대는 그대로
+                    # 13-23시는 이미 정확함
                 
                 return hour, minute
         
         return None, None
     
+    def is_early_morning_context(self, created_at):
+        """새벽 시간대 발언인지 확인 (오전 12시~6시)"""
+        hour = created_at.hour
+        return 0 <= hour <= 6
+    
     def parse_schedule_time(self, schedule):
-        """일정 시간 정보를 파싱하여 datetime 객체 생성 (날짜 파싱 개선된 버전)"""
+        """일정 시간 정보를 파싱하여 datetime 객체 생성 (수정된 버전)"""
         when_text = schedule.get('extracted_info', {}).get('when', '').lower()
         created_at = schedule.get('created_at')
         
@@ -104,92 +114,139 @@ class CalendarManager:
         else:
             base_time = created_at.astimezone(self.kst) if created_at else datetime.now(self.kst)
         
+        print(f"      📝 원본 텍스트: '{when_text}'")
+        print(f"      🕐 작성 시간: {base_time.strftime('%Y-%m-%d %H:%M')}")
+        
+        # 새벽 시간대 발언 확인
+        is_early_morning = self.is_early_morning_context(base_time)
+        print(f"      🌙 새벽 발언: {is_early_morning}")
+        
         # 구체적인 시간 추출 시도
         extracted_hour, extracted_minute = self.extract_time_from_text(when_text, created_at)
         
-        # 날짜 결정 (우선순위 기반으로 개선)
+        # 날짜 결정 로직 (수정된 버전)
         target_date = None
-        default_hour = 6  # 시간이 불명확할 때 오전 6시
+        default_hour = 18  # 시간이 불명확할 때 오후 6시 (더 현실적)
         default_minute = 0
         
-        # 우선순위 1: 구체적인 요일 - 다양한 한국어 표현 지원
-        weekday_patterns = [
-            # 완전한 형태
-            ('월요일', 0), ('화요일', 1), ('수요일', 2), ('목요일', 3), 
-            ('금요일', 4), ('토요일', 5), ('일요일', 6),
-            # 채팅에서 많이 쓰는 "욜" 형태
-            ('월욜', 0), ('화욜', 1), ('수욜', 2), ('목욜', 3), 
-            ('금욜', 4), ('토욜', 5), ('일욜', 6),
-            # 짧은 형태 (안전한 패턴만)
-            ('월요', 0), ('화요', 1), ('수요', 2), ('목요', 3), 
-            ('금요', 4), ('토요', 5), ('일요', 6),
+        # 구체적인 날짜 패턴 우선 처리
+        date_patterns = [
+            (r'(\d{1,2})월\s*(\d{1,2})일', 'specific_date'),  # "8월 8일"
+            (r'(\d{1,2})/(\d{1,2})', 'specific_date'),        # "8/8"
         ]
         
-        found_weekday = None
+        specific_date_found = None
+        for pattern, date_type in date_patterns:
+            match = re.search(pattern, when_text)
+            if match:
+                month = int(match.group(1))
+                day = int(match.group(2))
+                try:
+                    # 올해 기준으로 날짜 생성
+                    specific_date_found = datetime(base_time.year, month, day).date()
+                    print(f"      📅 구체적 날짜 발견: {specific_date_found}")
+                    break
+                except ValueError:
+                    continue
         
-        # 요일 패턴 확인 (우선순위 순서대로)
-        for day_name, day_num in weekday_patterns:
-            if day_name in when_text:
-                found_weekday = day_num
-                print(f"      🎯 요일 발견: {day_name}")
-                break
-        
-        if found_weekday is not None:
-            # 이번 주 또는 다음 주의 해당 요일 찾기
-            current_weekday = base_time.weekday()  # 월요일=0, 일요일=6
-            days_ahead = found_weekday - current_weekday
-            
-            if days_ahead <= 0:  # 이번 주 해당 요일이 지났거나 오늘
-                days_ahead += 7  # 다음 주 해당 요일
-            
-            target_date = (base_time + timedelta(days=days_ahead)).date()
-            print(f"      📅 날짜: {list(weekday_patterns.keys())[found_weekday]} ({target_date})")
-        
-        # 우선순위 2: 내일 (가장 명확한 표현)
-        elif '내일' in when_text or 'tomorrow' in when_text:
-            target_date = (base_time + timedelta(days=1)).date()
-            print(f"      📅 날짜: 내일 ({target_date})")
-        
-        # 우선순위 3: 모레
-        elif '모레' in when_text:
-            target_date = (base_time + timedelta(days=2)).date()
-            print(f"      📅 날짜: 모레 ({target_date})")
-        
-        # 우선순위 4: 오늘 (내일보다 낮은 우선순위)
-        elif '오늘' in when_text or 'today' in when_text:
-            # '오늘 내일' 같은 경우 내일이 이미 처리되었으므로 여기 도달하지 않음
-            target_date = base_time.date()
-            print(f"      📅 날짜: 오늘 ({target_date})")
-        
-        # 우선순위 5: 이번주
-        elif '이번주' in when_text or 'this week' in when_text:
-            # 이번 주 일요일로 설정 (주간 일정 점검용)
-            days_until_sunday = (6 - base_time.weekday()) % 7
-            if days_until_sunday == 0:  # 오늘이 일요일이면 다음 일요일
-                days_until_sunday = 7
-            target_date = (base_time + timedelta(days=days_until_sunday)).date()
-            print(f"      📅 날짜: 이번 주 일요일 ({target_date})")
-        
-        # 우선순위 6: 다음주
-        elif '다음주' in when_text or 'next week' in when_text:
-            # 다음 주 일요일로 설정
-            days_until_next_sunday = (6 - base_time.weekday()) % 7 + 7
-            target_date = (base_time + timedelta(days=days_until_next_sunday)).date()
-            print(f"      📅 날짜: 다음 주 일요일 ({target_date})")
-        
+        if specific_date_found:
+            target_date = specific_date_found
+            print(f"      ✅ 구체적 날짜 사용: {target_date}")
         else:
-            # 구체적인 날짜가 없으면 내일로 설정
-            target_date = (base_time + timedelta(days=1)).date()
-            print(f"      📅 날짜: 구체적 언급 없음 → 내일 ({target_date})")
+            # 상대적 날짜 표현 처리
+            
+            # 우선순위 1: 오늘 (가장 명확한 표현)
+            if '오늘' in when_text or 'today' in when_text:
+                if is_early_morning:
+                    # 새벽에 "오늘"이라고 하면 실제로는 당일을 의미
+                    target_date = base_time.date()
+                    print(f"      📅 새벽 '오늘': {target_date} (당일 기준)")
+                else:
+                    target_date = base_time.date()
+                    print(f"      📅 '오늘': {target_date}")
+            
+            # 우선순위 2: 내일
+            elif '내일' in when_text or 'tomorrow' in when_text:
+                if is_early_morning:
+                    # 새벽에 "내일"이라고 하면 실제로는 오늘을 의미할 수 있음
+                    target_date = base_time.date()
+                    print(f"      📅 새벽 '내일': {target_date} (실제로는 오늘)")
+                else:
+                    target_date = (base_time + timedelta(days=1)).date()
+                    print(f"      📅 '내일': {target_date}")
+            
+            # 우선순위 3: 모레
+            elif '모레' in when_text:
+                if is_early_morning:
+                    target_date = (base_time + timedelta(days=1)).date()
+                    print(f"      📅 새벽 '모레': {target_date} (실제로는 내일)")
+                else:
+                    target_date = (base_time + timedelta(days=2)).date()
+                    print(f"      📅 '모레': {target_date}")
+            
+            # 우선순위 4: 구체적인 요일
+            else:
+                weekday_patterns = [
+                    ('월요일', 0), ('화요일', 1), ('수요일', 2), ('목요일', 3), 
+                    ('금요일', 4), ('토요일', 5), ('일요일', 6),
+                    ('월욜', 0), ('화욜', 1), ('수욜', 2), ('목욜', 3), 
+                    ('금욜', 4), ('토욜', 5), ('일욜', 6),
+                    ('월요', 0), ('화요', 1), ('수요', 2), ('목요', 3), 
+                    ('금요', 4), ('토요', 5), ('일요', 6),
+                ]
+                
+                found_weekday = None
+                for day_name, day_num in weekday_patterns:
+                    if day_name in when_text:
+                        found_weekday = day_num
+                        print(f"      🎯 요일 발견: {day_name}")
+                        break
+                
+                if found_weekday is not None:
+                    current_weekday = base_time.weekday()
+                    days_ahead = found_weekday - current_weekday
+                    
+                    if days_ahead <= 0:
+                        days_ahead += 7  # 다음 주 해당 요일
+                    
+                    target_date = (base_time + timedelta(days=days_ahead)).date()
+                    
+                    # 새벽 시간대 조정
+                    if is_early_morning and days_ahead == 1:
+                        # 새벽에 "내일 요일"이라고 하면 실제로는 오늘일 가능성
+                        target_date = (base_time + timedelta(days=days_ahead - 1)).date()
+                        print(f"      📅 새벽 요일 조정: {target_date}")
+                    else:
+                        print(f"      📅 요일 기준: {target_date}")
+                
+                # 기타 시간 표현
+                elif '이번주' in when_text:
+                    days_until_sunday = (6 - base_time.weekday()) % 7
+                    if days_until_sunday == 0:
+                        days_until_sunday = 7
+                    target_date = (base_time + timedelta(days=days_until_sunday)).date()
+                    print(f"      📅 이번 주: {target_date}")
+                
+                elif '다음주' in when_text:
+                    days_until_next_sunday = (6 - base_time.weekday()) % 7 + 7
+                    target_date = (base_time + timedelta(days=days_until_next_sunday)).date()
+                    print(f"      📅 다음 주: {target_date}")
+                
+                else:
+                    # 기본값: 다음 업무일 (내일)
+                    if is_early_morning:
+                        target_date = base_time.date()  # 새벽이면 오늘
+                        print(f"      📅 새벽 기본값: {target_date} (오늘)")
+                    else:
+                        target_date = (base_time + timedelta(days=1)).date()
+                        print(f"      📅 기본값: {target_date} (내일)")
         
         # 시간 설정
         if extracted_hour is not None and extracted_minute is not None:
-            # 구체적인 시간이 추출된 경우
             final_hour = extracted_hour
             final_minute = extracted_minute
             print(f"      🕐 시간: 추출됨 → {final_hour:02d}:{final_minute:02d}")
         else:
-            # 시간이 불명확한 경우 기본값 사용
             final_hour = default_hour
             final_minute = default_minute
             print(f"      🕐 시간: 불명확 → 기본값 {final_hour:02d}:{final_minute:02d}")
