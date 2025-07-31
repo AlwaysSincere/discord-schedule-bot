@@ -131,16 +131,17 @@ class MessageCollector(discord.Client):
             return False, f"점수부족:{score} " + ", ".join(reasons) if reasons else "키워드없음"
     
     async def collect_recent_messages(self):
-        """최근 10일간 메시지 수집 (개선된 필터링)"""
+        """최근 60일간 메시지 수집 (2달 대용량 테스트)"""
         print(f'\n📥 메시지 수집을 시작합니다...')
         
         # 한국 시간대 설정
         kst = pytz.timezone('Asia/Seoul')
         now = datetime.now(kst)
-        ten_days_ago = now - timedelta(days=10)  # 10일 전부터 수집
+        sixty_days_ago = now - timedelta(days=60)  # 60일 전부터 수집 (2달)
         
-        print(f'📅 수집 기간: {ten_days_ago.strftime("%Y-%m-%d %H:%M")} ~ {now.strftime("%Y-%m-%d %H:%M")} (한국시간)')
-        print(f'📊 수집 범위: 최근 10일간 (더 정확한 필터링 적용)')
+        print(f'📅 수집 기간: {sixty_days_ago.strftime("%Y-%m-%d %H:%M")} ~ {now.strftime("%Y-%m-%d %H:%M")} (한국시간)')
+        print(f'📊 수집 범위: 최근 60일간 (2달 대용량 테스트)')
+        print(f'⚠️  대용량 데이터 처리 - 처리 시간 10-15분 예상')
         
         total_messages = 0
         filtered_messages = 0
@@ -166,9 +167,9 @@ class MessageCollector(discord.Client):
                     channel_count = 0
                     channel_filtered = 0
                     
-                    # 최근 10일간 메시지 가져오기
+                    # 최근 60일간 메시지 가져오기 (대용량)
                     message_batch = []
-                    async for message in channel.history(after=ten_days_ago, limit=None):
+                    async for message in channel.history(after=sixty_days_ago, limit=None):
                         total_messages += 1
                         channel_count += 1
                         
@@ -207,11 +208,20 @@ class MessageCollector(discord.Client):
                     print(f'❌ 오류: {str(e)[:50]}...')
         
         # 수집 결과 요약
-        print(f'\n📊 10일간 메시지 수집 완료!')
+        print(f'\n📊 60일간 메시지 수집 완료!')
         print(f'   📥 전체 메시지: {total_messages:,}개')
         print(f'   🔍 필터링된 메시지: {filtered_messages:,}개')
         print(f'   📈 필터링 비율: {(filtered_messages/total_messages*100):.2f}%' if total_messages > 0 else '   비율: 0%')
         print(f'   🎯 AI 분석 예상 비용: 약 {((filtered_messages + 14) // 15 * 5):,}원')
+        print(f'   ⏱️  예상 처리 시간: 약 {((filtered_messages + 14) // 15 * 1.5 / 60):.1f}분')
+        
+        # 데이터량 경고
+        if filtered_messages > 300:
+            print(f'\n⚠️  대용량 데이터 감지!')
+            print(f'   📊 필터링된 메시지: {filtered_messages:,}개')
+            print(f'   💰 예상 AI 분석 비용: {((filtered_messages + 14) // 15 * 5):,}원')
+            print(f'   ⏱️  예상 처리 시간: {((filtered_messages + 14) // 15 * 1.5 / 60):.1f}분')
+            print(f'   🎯 2달 데이터로 더 정확한 패턴 분석 가능!')
         
         # 상위 채널별 통계
         print(f'\n📊 채널별 상위 10개:')
