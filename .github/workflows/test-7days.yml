@@ -1,0 +1,43 @@
+# .github/workflows/test-7days.yml
+name: Test Schedule Extraction (7 Days Only)
+
+# 수동 실행 전용
+on:
+  workflow_dispatch:
+
+jobs:
+  test-schedule-extraction:
+    runs-on: ubuntu-latest
+    
+    steps:
+    # 1단계: 코드 다운로드
+    - name: 📥 코드 체크아웃
+      uses: actions/checkout@v4
+    
+    # 2단계: Python 설치
+    - name: 🐍 Python 설정
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    # 3단계: 패키지 설치
+    - name: 📦 패키지 설치
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    # 4단계: 테스트 실행 (7일만)
+    - name: 🧪 테스트 실행 (7일 데이터)
+      env:
+        DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        CALENDAR_ID: ${{ secrets.CALENDAR_ID }}
+        TEST_MODE: 'true'  # 7일만 테스트
+        DAYS_LIMIT: '7'    # 7일 제한
+      run: |
+        echo "🧪 7일 테스트 모드 실행"
+        echo "💰 예상 비용: 약 500-1000원"
+        echo "⏱️ 예상 시간: 3-5분"
+        cd src
+        python test_main.py
