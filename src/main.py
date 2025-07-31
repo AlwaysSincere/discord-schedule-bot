@@ -2,7 +2,7 @@
 """
 Discord Schedule Bot - 메인 실행 파일
 Discord 메시지 수집 → AI 분류 → Google Calendar 연동
-""" 
+"""
 
 import asyncio
 import sys
@@ -12,7 +12,14 @@ import pytz
 
 # 프로젝트 모듈 import
 from discord_collector import collect_discord_messages
-from ai_classifier import classify_schedule_messages
+
+# AI 모듈은 조건부 import (키워드 분석 모드에서는 불필요)
+try:
+    from ai_classifier import classify_schedule_messages
+    AI_AVAILABLE = True
+except ImportError:
+    AI_AVAILABLE = False
+    print("⚠️  AI 모듈 import 실패 - 키워드 분석 모드에서만 실행 가능")
 
 async def main():
     """메인 실행 함수"""
@@ -56,6 +63,11 @@ async def main():
         # 2단계: AI 일정 분류 (전체 모드에서만)
         print(f"\n🤖 2단계: AI 일정 분류")
         print("-" * 50)
+        
+        if not AI_AVAILABLE:
+            print("❌ AI 모듈을 불러올 수 없습니다.")
+            print("💡 키워드 분석 모드로 실행하거나 ai_classifier.py 파일을 확인해주세요.")
+            return
         
         schedules, non_schedules = await classify_schedule_messages(messages)
         
@@ -116,7 +128,18 @@ async def main():
 
 def check_environment():
     """환경 변수 및 설정 확인"""
-    required_vars = ['DISCORD_TOKEN', 'OPENAI_API_KEY', 'GOOGLE_CREDENTIALS', 'CALENDAR_ID']
+    # 분석 모드 확인
+    analysis_mode = os.getenv('ANALYSIS_MODE', 'false').lower() == 'true'
+    
+    if analysis_mode:
+        # 키워드 분석 모드: Discord Token만 필요
+        required_vars = ['DISCORD_TOKEN']
+        print("🔍 키워드 분석 모드 - Discord Token만 확인")
+    else:
+        # 전체 모드: 모든 환경변수 필요
+        required_vars = ['DISCORD_TOKEN', 'OPENAI_API_KEY', 'GOOGLE_CREDENTIALS', 'CALENDAR_ID']
+        print("🚀 전체 모드 - 모든 환경변수 확인")
+    
     missing_vars = []
     
     for var in required_vars:
@@ -130,7 +153,7 @@ def check_environment():
             print(f"   - {var}")
         return False
     
-    print(f"✅ 모든 환경 변수가 설정되었습니다.")
+    print(f"✅ 필요한 환경 변수가 모두 설정되었습니다.")
     return True
 
 if __name__ == "__main__":
