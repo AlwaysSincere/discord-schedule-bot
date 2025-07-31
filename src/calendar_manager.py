@@ -112,18 +112,34 @@ class CalendarManager:
         default_hour = 6  # 시간이 불명확할 때 오전 6시
         default_minute = 0
         
-        # 우선순위 1: 구체적인 요일 (월화수목금토일)
-        weekday_patterns = {
-            '월요일': 0, '화요일': 1, '수요일': 2, '목요일': 3, 
-            '금요일': 4, '토요일': 5, '일요일': 6,
-            '월': 0, '화': 1, '수': 2, '목': 3, '금': 4, '토': 5, '일': 6
-        }
+        # 우선순위 1: 구체적인 요일 (월화수목금토일) - 완전한 단어로만 매칭
+        weekday_patterns = [
+            ('월요일', 0), ('화요일', 1), ('수요일', 2), ('목요일', 3), 
+            ('금요일', 4), ('토요일', 5), ('일요일', 6),
+        ]
+        
+        # 짧은 형태는 단어 경계에서만 매칭 (더 안전한 방식)
+        weekday_short_patterns = [
+            ('월요', 0), ('화요', 1), ('수요', 2), ('목요', 3), 
+            ('금요', 4), ('토요', 5), ('일요', 6),
+        ]
         
         found_weekday = None
-        for day_name, day_num in weekday_patterns.items():
+        
+        # 먼저 긴 형태 확인 (월요일, 화요일 등)
+        for day_name, day_num in weekday_patterns:
             if day_name in when_text:
                 found_weekday = day_num
+                print(f"      🎯 요일 발견: {day_name}")
                 break
+        
+        # 긴 형태가 없으면 짧은 형태 확인 (월요, 화요 등)
+        if found_weekday is None:
+            for day_name, day_num in weekday_short_patterns:
+                if day_name in when_text:
+                    found_weekday = day_num
+                    print(f"      🎯 요일 발견: {day_name}")
+                    break
         
         if found_weekday is not None:
             # 이번 주 또는 다음 주의 해당 요일 찾기
