@@ -93,7 +93,7 @@ class CalendarManager:
         return None, None
     
     def parse_schedule_time(self, schedule):
-        """일정 시간 정보를 파싱하여 datetime 객체 생성 (개선된 버전)"""
+        """일정 시간 정보를 파싱하여 datetime 객체 생성 (날짜 파싱 개선된 버전)"""
         when_text = schedule.get('extracted_info', {}).get('when', '').lower()
         created_at = schedule.get('created_at')
         
@@ -107,23 +107,52 @@ class CalendarManager:
         # 구체적인 시간 추출 시도
         extracted_hour, extracted_minute = self.extract_time_from_text(when_text, created_at)
         
-        # 날짜 결정
+        # 날짜 결정 (우선순위 기반으로 개선)
         target_date = None
-        default_hour = 6  # 시간이 불명확할 때 오전 6시 (기존 오후 6시에서 변경)
+        default_hour = 6  # 시간이 불명확할 때 오전 6시
         default_minute = 0
         
-        if '오늘' in when_text or 'today' in when_text:
-            target_date = base_time.date()
-            print(f"      📅 날짜: 오늘 ({target_date})")
+        # 우선순위 1: 구체적인 요일 (월화수목금토일)
+        weekday_patterns = {
+            '월요일': 0, '화요일': 1, '수요일': 2, '목요일': 3, 
+            '금요일': 4, '토요일': 5, '일요일': 6,
+            '월': 0, '화': 1, '수': 2, '목': 3, '금': 4, '토': 5, '일': 6
+        }
+        
+        found_weekday = None
+        for day_name, day_num in weekday_patterns.items():
+            if day_name in when_text:
+                found_weekday = day_num
+                break
+        
+        if found_weekday is not None:
+            # 이번 주 또는 다음 주의 해당 요일 찾기
+            current_weekday = base_time.weekday()  # 월요일=0, 일요일=6
+            days_ahead = found_weekday - current_weekday
             
+            if days_ahead <= 0:  # 이번 주 해당 요일이 지났거나 오늘
+                days_ahead += 7  # 다음 주 해당 요일
+            
+            target_date = (base_time + timedelta(days=days_ahead)).date()
+            print(f"      📅 날짜: {list(weekday_patterns.keys())[found_weekday]} ({target_date})")
+        
+        # 우선순위 2: 내일 (가장 명확한 표현)
         elif '내일' in when_text or 'tomorrow' in when_text:
             target_date = (base_time + timedelta(days=1)).date()
             print(f"      📅 날짜: 내일 ({target_date})")
-            
+        
+        # 우선순위 3: 모레
         elif '모레' in when_text:
             target_date = (base_time + timedelta(days=2)).date()
             print(f"      📅 날짜: 모레 ({target_date})")
-            
+        
+        # 우선순위 4: 오늘 (내일보다 낮은 우선순위)
+        elif '오늘' in when_text or 'today' in when_text:
+            # '오늘 내일' 같은 경우 내일이 이미 처리되었으므로 여기 도달하지 않음
+            target_date = base_time.date()
+            print(f"      📅 날짜: 오늘 ({target_date})")
+        
+        # 우선순위 5: 이번주
         elif '이번주' in when_text or 'this week' in when_text:
             # 이번 주 일요일로 설정 (주간 일정 점검용)
             days_until_sunday = (6 - base_time.weekday()) % 7
@@ -131,13 +160,14 @@ class CalendarManager:
                 days_until_sunday = 7
             target_date = (base_time + timedelta(days=days_until_sunday)).date()
             print(f"      📅 날짜: 이번 주 일요일 ({target_date})")
-            
+        
+        # 우선순위 6: 다음주
         elif '다음주' in when_text or 'next week' in when_text:
             # 다음 주 일요일로 설정
             days_until_next_sunday = (6 - base_time.weekday()) % 7 + 7
             target_date = (base_time + timedelta(days=days_until_next_sunday)).date()
             print(f"      📅 날짜: 다음 주 일요일 ({target_date})")
-            
+        
         else:
             # 구체적인 날짜가 없으면 내일로 설정
             target_date = (base_time + timedelta(days=1)).date()
