@@ -19,11 +19,15 @@ class MessageCollector(discord.Client):
         """봇이 로그인한 후 메시지 수집 시작"""
         print(f'🎉 봇 로그인 성공: {self.user}')
         
-        # 메시지 수집 실행
-        await self.collect_recent_messages()
-        
-        # 수집 완료 후 봇 종료
-        await self.close()
+        try:
+            # 메시지 수집 실행
+            await self.collect_recent_messages()
+        except Exception as e:
+            print(f"❌ 메시지 수집 중 오류: {e}")
+        finally:
+            # 수집 완료 후 봇 안전 종료
+            print("🔌 봇 연결을 종료합니다...")
+            await self.close()
     
     async def collect_recent_messages(self):
         """최근 24시간 메시지 수집"""
@@ -382,6 +386,11 @@ async def collect_discord_messages():
     except Exception as e:
         print(f"❌ 예상치 못한 오류 발생: {e}")
         return []
+    finally:
+        # 연결이 완전히 종료되었는지 확인
+        if not collector.is_closed():
+            await collector.close()
+        print("🔌 Discord 연결이 안전하게 종료되었습니다.")
 
 # 이 파일이 직접 실행될 때만 테스트 수행
 if __name__ == "__main__":
