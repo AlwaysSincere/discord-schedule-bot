@@ -1,6 +1,5 @@
-# Daily schedule automation
-# Discord Schedule Bot - 연결 테스트
-name: Discord Connection Test
+# Discord Schedule Bot - 키워드 분석 모드
+name: Keyword Analysis Mode
 
 # 언제 실행할지 설정
 on:
@@ -13,7 +12,7 @@ on:
 
 # 실행할 작업들
 jobs:
-  test-discord-connection:
+  keyword-analysis:
     runs-on: ubuntu-latest  # Ubuntu 리눅스 환경에서 실행
     
     steps:
@@ -33,13 +32,15 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
     
-    # 4단계: Discord 연결 테스트 실행
-    - name: 🤖 Discord 연결 테스트
+    # 4단계: 키워드 분석 모드 실행 (OpenAI API 사용 안함)
+    - name: 🔍 키워드 분석 모드 실행
       env:
         DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
         CALENDAR_ID: ${{ secrets.CALENDAR_ID }}
+        ANALYSIS_MODE: 'true'  # 키워드 분석만 실행
       run: |
-        echo "Discord 봇 연결 테스트를 시작합니다..."
-        python src/discord_collector.py
+        echo "키워드 분석 모드를 시작합니다 (OpenAI API 사용 안함)..."
+        cd src
+        python main.py
