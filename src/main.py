@@ -2,7 +2,7 @@
 """
 Discord Schedule Bot - 메인 실행 파일
 Discord 메시지 수집 → AI 분류 → Google Calendar 연동
-"""
+""" 
 
 import asyncio
 import sys
