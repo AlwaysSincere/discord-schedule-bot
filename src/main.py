@@ -109,7 +109,15 @@ async def main():
         print(f"   📥 수집된 메시지: {len(messages)}개")
         print(f"   📅 발견된 일정: {len(schedules)}개")
         print(f"   💬 일반 대화: {len(non_schedules)}개")
-        print(f"   🎯 일정 비율: {len(schedules)/(len(schedules)+len(non_schedules))*100:.1f}%")
+        
+        # 0으로 나누기 방지
+        total_analyzed = len(schedules) + len(non_schedules)
+        if total_analyzed > 0:
+            schedule_ratio = len(schedules) / total_analyzed * 100
+            print(f"   🎯 일정 비율: {schedule_ratio:.1f}%")
+        else:
+            print(f"   🎯 일정 비율: 0% (분석 실패)")
+        
         print("=" * 70)
         
     except KeyboardInterrupt:
