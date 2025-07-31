@@ -21,72 +21,65 @@ class ScheduleClassifier:
         self.schedules = []
         self.non_schedules = []
         
-    def create_classification_prompt(self, messages):
-        """메시지 분류를 위한 프롬프트 생성 (개선된 버전)"""
-        
-        # 현재 시간 (한국 시간대)
-        kst = pytz.timezone('Asia/Seoul')
-        now = datetime.now(kst)
-        
-        prompt = f"""당신은 음악 동아리 Discord 메시지에서 일정을 분류하는 전문 AI입니다.
+def create_classification_prompt(self, messages):
+    """메시지 분류를 위한 프롬프트 생성 (엄격한 버전)"""
+    
+    kst = pytz.timezone('Asia/Seoul')
+    now = datetime.now(kst)
+    
+    prompt = f"""당신은 Discord 메시지에서 **실제 구체적인 일정**만을 찾는 전문가입니다.
 
 **현재 시간**: {now.strftime('%Y년 %m월 %d일 %H시 %M분')} (한국시간)
 
-**음악 동아리 "✨동아리 밴드✨" 특성**:
-- 합주, 리허설, 공연 준비가 주요 활동
-- 연습실, 스튜디오에서 활동
-- 크레비쥬 공연 등 정기 이벤트 있음
-- 멤버들이 끊어서 채팅하는 경우 많음
+**🚨 절대 일정이 아닌 것들 (99% 제외)**:
+1. **단순 대답**: "합니다", "맞습니다" (구체적 제안 없이)
+   예: "아 합주연습은합니다" → 단순 대답, 일정 아님
+2. **질문/의문**: "~있나요?", "~어때요?", "~괜찮나요?"
+   예: "공연날은 기타 바꿀 시간 있갰죠?" → 질문, 일정 아님
+3. **순서/방법 설명**: "순서대로", "먼저", "그다음에"
+   예: "다음 리허설은 순서대로 라이트 먼저" → 순서 설명, 일정 아님
+4. **과거형/완료형**: "했어", "됐어", "끝났어"
+5. **막연한 미래**: "언젠가", "나중에", "다음에"
+6. **감정/바람**: "잘 했으면", "즐겁게"
 
-**❗ 중요: 다음은 일정이 아닙니다 ❗**:
-1. **과거 이야기**: "어제 연습 어땠어", "지난번 공연 좋았어"
-2. **단순 질문**: "혹시 ~ 있나요?", "~ 어떻게 생각해요?"
-3. **녹음/영상 문의**: "~ 녹음된 거 있어?", "영상 봤어?"
-4. **일반 대화**: "점심 뭐 먹을까", "날씨 좋네"
-5. **감상/후기**: "~ 어땠어", "좋았어", "재밌었어"
-6. **완료된 일**: "~ 끝났어", "~ 했어"
+**✅ 반드시 일정인 것들만**:
+1. **시간 + 구체적 행동**: "오늘 8시 합주", "2시 20분 콜타임"
+2. **명확한 제안**: "~하죠?", "~해요", "~합시다"
+3. **확인형**: "오늘 합주 맞죠?", "시간 그대로 하죠?"
+4. **공지/알림**: "콜타임입니다", "리허설입니다" (시간 포함시)
 
-**✅ 일정으로 분류해야 할 것들**:
-1. **구체적 제안**: "내일 3시에 연습실에서 합주해요"
-2. **시간 조율**: "언제 만날까요?", "몇 시가 좋을까요?"
-3. **일정 확인**: "내일 리허설 맞죠?", "시간 변경 어때요?"
-4. **공지성 일정**: "오늘 2시 20분 콜타임입니다"
-5. **계획 제안**: "다음주에 연습 어때요?"
+**분류 기준 (극도로 엄격)**:
+- 확신도 95% 이상만 일정으로 분류
+- 의심스러우면 무조건 일정 아님으로 분류
+- 구체적 시간/날짜가 없으면 일정 아님
+- 단순 대답/질문은 무조건 일정 아님
 
-**분류 기준 (더 엄격하게)**:
-- 미래 시점의 구체적인 행동 계획이 있어야 함
-- 시간이나 날짜가 언급되거나 암묵적으로 포함되어야 함
-- 확신도가 85% 미만이면 일정 아님으로 분류
-- 과거형 동사나 완료형이 주가 되면 일정 아님
-
-다음 메시지들을 분석해서 JSON 형식으로 답변해주세요:
+JSON 형식으로 답변:
 
 ```json
 {{
   "schedules": [
     {{
-      "message_id": "메시지ID",
-      "content": "전체 메시지 내용",
+      "message_id": "ID",
+      "content": "내용",
       "author": "작성자",
-      "channel": "채널명",
-      "created_at": "작성시간",
-      "schedule_type": "합주|리허설|연습|공연|회의|모임|기타",
+      "channel": "채널",
+      "created_at": "시간",
+      "schedule_type": "합주|리허설|연습|공연|회의|콜타임",
       "confidence": 0.95,
       "extracted_info": {{
-        "when": "언제 (구체적으로: 오늘 2시 20분, 내일 오후)",
-        "what": "무엇을 (예: 합주, 리허설, 콜타임)",
-        "where": "어디서 (예: 연습실, 스튜디오)"
+        "when": "구체적 시간",
+        "what": "구체적 행동",
+        "where": "장소"
       }},
-      "reason": "일정으로 분류한 상세 이유",
-      "is_context_group": true,
-      "message_count": 3
+      "reason": "일정으로 분류한 이유"
     }}
   ],
   "non_schedules": [
     {{
-      "message_id": "메시지ID", 
-      "content": "메시지 내용",
-      "reason": "일정이 아닌 구체적 이유 (과거형/질문/완료 등)"
+      "message_id": "ID",
+      "content": "내용",
+      "reason": "제외 이유 (단순대답/질문/순서설명 등)"
     }}
   ]
 }}
@@ -94,25 +87,20 @@ class ScheduleClassifier:
 
 **분석할 메시지들**:
 """
+    
+    # 메시지 목록 추가 (더 적은 수로 정확도 향상)
+    for i, msg in enumerate(messages[:8]):
+        context_info = f" [맥락그룹: {msg.get('message_count', 1)}개]" if msg.get('is_context_grouped', False) else ""
         
-        # 메시지 목록 추가 (최대 15개씩 처리 - 더 정확한 분석을 위해 줄임)
-        for i, msg in enumerate(messages[:15]):
-            # 맥락 그룹 정보 포함
-            is_context_group = msg.get('is_context_grouped', False)
-            message_count = msg.get('message_count', 1)
-            context_info = f" [맥락그룹: {message_count}개 메시지]" if is_context_group else ""
-            
-            prompt += f"""
+        prompt += f"""
 {i+1}. ID: {msg['id']}
    내용: "{msg['content']}"
    작성자: {msg['author']}
    채널: {msg['channel']}
-   시간: {msg['created_at'].strftime('%Y-%m-%d %H:%M')}
-   키워드: {msg.get('keywords_found', [])}
-   맥락: {context_info}
+   시간: {msg['created_at'].strftime('%Y-%m-%d %H:%M')}{context_info}
 """
-        
-        return prompt
+    
+    return prompt
     
     async def classify_messages(self, messages):
         """메시지들을 AI로 분류 (개선된 버전)"""
