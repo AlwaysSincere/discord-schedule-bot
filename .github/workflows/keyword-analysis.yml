@@ -1,0 +1,40 @@
+# Discord Schedule Bot - 키워드 분석 전용 워크플로
+name: Keyword Analysis (No AI)
+
+# 언제 실행할지 설정
+on:
+  # 수동으로 실행할 수 있게 설정
+  workflow_dispatch:
+
+# 실행할 작업들
+jobs:
+  keyword-analysis:
+    runs-on: ubuntu-latest
+    
+    steps:
+    # 1단계: 코드 다운로드
+    - name: 📥 코드 체크아웃
+      uses: actions/checkout@v4
+    
+    # 2단계: Python 설치
+    - name: 🐍 Python 설정
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    # 3단계: 필요한 패키지 설치 (최소한만)
+    - name: 📦 패키지 설치
+      run: |
+        python -m pip install --upgrade pip
+        pip install discord.py==2.3.2 pytz==2023.3
+    
+    # 4단계: 키워드 분석 실행 (OpenAI API 없이)
+    - name: 🔬 Discord 키워드 분석 실행
+      env:
+        DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+      run: |
+        echo "🔬 키워드 분석 시작 (OpenAI API 사용 안함, 비용 0원)"
+        echo "📅 분석 기간: 2025년 6월 1일 ~ 7월 31일"
+        echo "🎯 목적: 실제 일정과 연관된 키워드 패턴 추출"
+        cd src
+        python keyword_analysis_main.py
