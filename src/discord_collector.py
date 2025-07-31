@@ -376,21 +376,32 @@ async def collect_discord_messages():
     
     # 메시지 수집기 실행
     collector = MessageCollector()
+    collected_messages = []
     
     try:
         await collector.start(token)
-        return collector.collected_messages
+        collected_messages = collector.collected_messages.copy()  # 복사본 생성
+        print("✅ 메시지 수집 완료")
+        
     except discord.LoginFailure:
         print("❌ 로그인 실패: Discord 토큰이 잘못되었습니다!")
-        return []
+        
     except Exception as e:
         print(f"❌ 예상치 못한 오류 발생: {e}")
-        return []
+        
     finally:
-        # 연결이 완전히 종료되었는지 확인
-        if not collector.is_closed():
-            await collector.close()
-        print("🔌 Discord 연결이 안전하게 종료되었습니다.")
+        # 강제로 연결 종료
+        try:
+            if not collector.is_closed():
+                await collector.close()
+            print("🔌 Discord 연결이 안전하게 종료되었습니다.")
+        except Exception as close_error:
+            print(f"⚠️ 연결 종료 중 오류 (무시 가능): {close_error}")
+        
+        # 추가 대기 시간으로 완전한 정리 보장
+        await asyncio.sleep(1)
+    
+    return collected_messages
 
 # 이 파일이 직접 실행될 때만 테스트 수행
 if __name__ == "__main__":
