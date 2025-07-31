@@ -9,8 +9,18 @@ class ScheduleClassifier:
     def __init__(self):
         """AI 일정 분류기 초기화"""
         # OpenAI API 키 설정
-        openai.api_key = os.getenv('OPENAI_API_KEY')
-        self.client = openai.OpenAI(api_key=openai.api_key)
+        api_key = os.getenv('OPENAI_API_KEY')
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY 환경변수가 설정되지 않았습니다.")
+        
+        # OpenAI 클라이언트 초기화 (버전 호환성 개선)
+        try:
+            self.client = openai.OpenAI(api_key=api_key)
+        except Exception as e:
+            print(f"OpenAI 클라이언트 초기화 실패: {e}")
+            # 이전 버전 호환성을 위한 대체 방법
+            openai.api_key = api_key
+            self.client = None
         
         # 분류 결과 저장
         self.schedules = []
@@ -129,18 +139,36 @@ class ScheduleClassifier:
                 # AI 분석 요청
                 prompt = self.create_classification_prompt(batch_messages)
                 
-                response = self.client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": "당신은 정확한 일정 분류 전문가입니다. 한국어 메시지를 분석하여 JSON 형식으로 응답해주세요."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.1,  # 일관된 결과를 위해 낮게 설정
-                    max_tokens=2000
-                )
-                
-                # JSON 응답 파싱
-                response_text = response.choices[0].message.content.strip()
+                try:
+                    if self.client:
+                        # 새로운 클라이언트 방식
+                        response = self.client.chat.completions.create(
+                            model="gpt-3.5-turbo",
+                            messages=[
+                                {"role": "system", "content": "당신은 정확한 일정 분류 전문가입니다. 한국어 메시지를 분석하여 JSON 형식으로 응답해주세요."},
+                                {"role": "user", "content": prompt}
+                            ],
+                            temperature=0.1,  # 일관된 결과를 위해 낮게 설정
+                            max_tokens=2000
+                        )
+                        response_text = response.choices[0].message.content.strip()
+                    else:
+                        # 이전 방식 (호환성)
+                        response = openai.ChatCompletion.create(
+                            model="gpt-3.5-turbo",
+                            messages=[
+                                {"role": "system", "content": "당신은 정확한 일정 분류 전문가입니다. 한국어 메시지를 분석하여 JSON 형식으로 응답해주세요."},
+                                {"role": "user", "content": prompt}
+                            ],
+                            temperature=0.1,
+                            max_tokens=2000
+                        )
+                        response_text = response.choices[0].message.content.strip()
+                    
+                except Exception as api_error:
+                    print(f"  ❌ OpenAI API 호출 오류: {api_error}")
+                    print(f"     재시도하거나 다른 방식을 시도합니다...")
+                    continue
                 
                 # JSON 추출 (```json 태그 제거)
                 if "```json" in response_text:
@@ -238,4 +266,4 @@ if __name__ == "__main__":
         schedules, non_schedules = await classify_schedule_messages(sample_messages)
         print(f"\n🎯 테스트 결과: 일정 {len(schedules)}개, 비일정 {len(non_schedules)}개")
     
-    asyncio.run(test())# AI schedule classifier
+    asyncio.run(test())
