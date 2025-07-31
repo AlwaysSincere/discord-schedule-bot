@@ -1,0 +1,42 @@
+# Discord Schedule Bot - 데이터 기반 필터링 정확도 테스트
+name: Manual Accuracy Test (6 Months)
+
+# 언제 실행할지 설정
+on:
+  # 수동으로 실행할 수 있게 설정
+  workflow_dispatch:
+
+# 실행할 작업들
+jobs:
+  manual-accuracy-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    # 1단계: 코드 다운로드
+    - name: 📥 코드 체크아웃
+      uses: actions/checkout@v4
+    
+    # 2단계: Python 설치
+    - name: 🐍 Python 설정
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    # 3단계: 필요한 패키지 설치 (최소한만)
+    - name: 📦 패키지 설치
+      run: |
+        python -m pip install --upgrade pip
+        pip install discord.py==2.3.2 pytz==2023.3
+    
+    # 4단계: 데이터 기반 필터링 정확도 테스트 실행
+    - name: 🧪 데이터 기반 필터링 테스트 실행
+      env:
+        DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+      run: |
+        echo "🧪 데이터 기반 필터링 정확도 테스트 시작"
+        echo "📅 테스트 기간: 2025년 2월 1일 ~ 7월 31일 (6개월)"
+        echo "🔍 키워드: 26개 데이터 분석 결과 + 현합"
+        echo "📊 목표: True/False Positive 비율 수동 확인"
+        echo "💰 비용: 0원 (OpenAI API 사용 안함)"
+        cd src
+        python manual_test_main.py
