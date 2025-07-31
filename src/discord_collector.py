@@ -3,6 +3,7 @@ import os
 import asyncio
 from datetime import datetime, timedelta
 import pytz
+import re
 
 class MessageCollector(discord.Client):
     def __init__(self):
@@ -29,8 +30,108 @@ class MessageCollector(discord.Client):
             print("🔌 봇 연결을 종료합니다...")
             await self.close()
     
+    def is_likely_schedule(self, message_text):
+        """메시지가 일정일 가능성을 더 정교하게 판단하는 함수"""
+        text = message_text.lower()
+        
+        # 명확히 일정이 아닌 패턴들 (강력한 제외 기준)
+        exclude_patterns = [
+            r'어제.*?어땠',     # "어제 연습 어땠어"
+            r'지난번.*?어땠',   # "지난번 공연 어땠어"
+            r'.*?었어$',        # "~했었어", "좋았어"
+            r'.*?했어$',        # "연습했어", "끝났어"
+            r'.*?어떻게\s*생각', # "어떻게 생각해"
+            r'.*?녹음.*?있',    # "녹음된 거 있어?"
+            r'.*?영상.*?봤',    # "영상 봤어?"
+            r'점심.*?뭐.*?먹',  # "점심 뭐 먹을까"
+            r'날씨.*?좋',       # "날씨 좋네"
+            r'고생.*?했',       # "고생했어"
+            r'수고.*?했',       # "수고했어"
+        ]
+        
+        # 제외 패턴에 걸리면 일정이 아님
+        for pattern in exclude_patterns:
+            if re.search(pattern, text):
+                return False, f"제외패턴: {pattern}"
+        
+        # 강력한 일정 시그널 (이것들이 있으면 거의 확실히 일정)
+        strong_schedule_signals = [
+            r'\d{1,2}시\s*\d{1,2}분',     # "2시 20분"
+            r'오늘.*?\d{1,2}시',           # "오늘 3시"
+            r'내일.*?\d{1,2}시',           # "내일 8시"
+            r'콜타임',                     # "콜타임입니다"
+            r'세팅.*?완료',                 # "세팅 완료"
+            r'오전.*?\d{1,2}시',           # "오전 9시"
+            r'오후.*?\d{1,2}시',           # "오후 3시"
+        ]
+        
+        for pattern in strong_schedule_signals:
+            if re.search(pattern, text):
+                return True, f"강력시그널: {pattern}"
+        
+        # 중간 강도 일정 시그널들 (다른 조건과 함께 고려)
+        medium_schedule_signals = [
+            r'언제.*?할까',    # "언제 할까"
+            r'몇시.*?가능',    # "몇시 가능"
+            r'시간.*?어때',    # "시간 어때"
+            r'만날까',         # "만날까"
+            r'가자',           # "가자"
+            r'하자',           # "하자"
+            r'어때요?',        # "어때요?"
+            r'괜찮나요?',      # "괜찮나요?"
+        ]
+        
+        medium_signals_found = []
+        for pattern in medium_schedule_signals:
+            if re.search(pattern, text):
+                medium_signals_found.append(pattern)
+        
+        # 핵심 키워드 (음악 동아리 특화)
+        core_keywords = ['합주', '리허설', '연습', '공연', '콘서트', '세팅', '사운드체크']
+        core_found = [kw for kw in core_keywords if kw in text]
+        
+        # 시간 표현 키워드
+        time_keywords = ['오늘', '내일', '모레', '이번주', '다음주', '언제', '몇시', '시간']
+        time_found = [kw for kw in time_keywords if kw in text]
+        
+        # 장소 키워드
+        place_keywords = ['연습실', '스튜디오', '공연장']
+        place_found = [kw for kw in place_keywords if kw in text]
+        
+        # 종합 판단
+        score = 0
+        reasons = []
+        
+        # 강력한 시그널이 있으면 이미 True로 반환됨
+        
+        # 핵심 키워드 점수
+        if core_found:
+            score += len(core_found) * 3
+            reasons.append(f"핵심키워드: {core_found}")
+        
+        # 시간 표현 점수
+        if time_found:
+            score += len(time_found) * 2
+            reasons.append(f"시간표현: {time_found}")
+        
+        # 중간 시그널 점수
+        if medium_signals_found:
+            score += len(medium_signals_found) * 2
+            reasons.append(f"일정시그널: {medium_signals_found}")
+        
+        # 장소 키워드 점수
+        if place_found:
+            score += len(place_found) * 1
+            reasons.append(f"장소: {place_found}")
+        
+        # 점수 기반 판단 (더 엄격하게)
+        if score >= 4:
+            return True, f"점수:{score} " + ", ".join(reasons)
+        else:
+            return False, f"점수부족:{score} " + ", ".join(reasons) if reasons else "키워드없음"
+    
     async def collect_recent_messages(self):
-        """최근 10일간 메시지 수집 (테스트용 대용량 데이터)"""
+        """최근 10일간 메시지 수집 (개선된 필터링)"""
         print(f'\n📥 메시지 수집을 시작합니다...')
         
         # 한국 시간대 설정
@@ -39,29 +140,7 @@ class MessageCollector(discord.Client):
         ten_days_ago = now - timedelta(days=10)  # 10일 전부터 수집
         
         print(f'📅 수집 기간: {ten_days_ago.strftime("%Y-%m-%d %H:%M")} ~ {now.strftime("%Y-%m-%d %H:%M")} (한국시간)')
-        print(f'📊 수집 범위: 최근 10일간 (대용량 테스트 모드)')
-        
-        # 일정 관련 키워드 (1차 필터링용) - 최적화된 버전
-        schedule_keywords = [
-            # 핵심 일정 키워드 (높은 정확도)
-            '회의', '미팅', '약속', '모임',
-            
-            # 음악 관련 (동아리 특화 - 높은 정확도)
-            '합주', '리허설', '연습', '공연', '콘서트', '연주',
-            '세팅', '사운드체크', '무대',
-            
-            # 장소 관련 (구체적)
-            '연습실', '공연장', '스튜디오',
-            
-            # 시간 표현 (구체적인 것만)
-            '몇시', '시에', '오전', '오후',
-            
-            # 질문/제안 (구체적인 표현)
-            '언제', '할까', '어때', '가능',
-            
-            # 일정 관련 (직접적)
-            '일정', '계획', '예약'
-        ]
+        print(f'📊 수집 범위: 최근 10일간 (더 정확한 필터링 적용)')
         
         total_messages = 0
         filtered_messages = 0
@@ -87,7 +166,7 @@ class MessageCollector(discord.Client):
                     channel_count = 0
                     channel_filtered = 0
                     
-                    # 최근 10일간 메시지 가져오기 (대용량)
+                    # 최근 10일간 메시지 가져오기
                     message_batch = []
                     async for message in channel.history(after=ten_days_ago, limit=None):
                         total_messages += 1
@@ -102,14 +181,14 @@ class MessageCollector(discord.Client):
                         
                         # 1000개씩 배치 처리 (메모리 효율성)
                         if len(message_batch) >= 1000:
-                            batch_filtered = self.process_message_batch(message_batch, schedule_keywords, kst)
+                            batch_filtered = self.process_message_batch_improved(message_batch, kst)
                             channel_filtered += batch_filtered
                             filtered_messages += batch_filtered
                             message_batch = []
                     
                     # 남은 메시지들 처리
                     if message_batch:
-                        batch_filtered = self.process_message_batch(message_batch, schedule_keywords, kst)
+                        batch_filtered = self.process_message_batch_improved(message_batch, kst)
                         channel_filtered += batch_filtered
                         filtered_messages += batch_filtered
                     
@@ -132,6 +211,7 @@ class MessageCollector(discord.Client):
         print(f'   📥 전체 메시지: {total_messages:,}개')
         print(f'   🔍 필터링된 메시지: {filtered_messages:,}개')
         print(f'   📈 필터링 비율: {(filtered_messages/total_messages*100):.2f}%' if total_messages > 0 else '   비율: 0%')
+        print(f'   🎯 AI 분석 예상 비용: 약 {((filtered_messages + 14) // 15 * 5):,}원')
         
         # 상위 채널별 통계
         print(f'\n📊 채널별 상위 10개:')
@@ -145,27 +225,26 @@ class MessageCollector(discord.Client):
             self.group_context_messages()
             
             # 키워드 분석 모드에서는 상세 분석 출력
-            print(f'\n📈 대용량 데이터 분석 준비 완료!')
+            print(f'\n📈 개선된 필터링 완료!')
             print(f'   🎯 AI 분석 대상: {len(self.collected_messages)}개 맥락 그룹')
             
-            # 상세 키워드 분석 (대용량 최적화된 버전)
-            self.analyze_keywords_and_messages(schedule_keywords)
+            # 필터링 품질 분석
+            self.analyze_filtering_quality()
         else:
             print(f'\n💡 필터링된 메시지가 없습니다. 키워드를 조정해보세요.')
     
-    def process_message_batch(self, message_batch, schedule_keywords, kst):
-        """메시지 배치를 처리하여 키워드 필터링"""
+    def process_message_batch_improved(self, message_batch, kst):
+        """개선된 메시지 배치 처리 (더 정교한 필터링)"""
         batch_filtered = 0
         
         for message in message_batch:
-            # 1차 필터링: 일정 관련 키워드만으로 필터링
-            message_text = message.content.lower()
-            found_keywords = [kw for kw in schedule_keywords if kw in message_text]
+            # 개선된 일정 가능성 판단
+            is_schedule, reason = self.is_likely_schedule(message.content)
             
-            if found_keywords:  # 키워드가 포함된 메시지만 수집
+            if is_schedule:
                 batch_filtered += 1
                 
-                # 메시지 정보 저장
+                # 메시지 정보 저장 (더 상세한 정보 포함)
                 message_data = {
                     'id': message.id,
                     'content': message.content,
@@ -173,25 +252,26 @@ class MessageCollector(discord.Client):
                     'channel': f'#{message.channel.name}',
                     'guild': message.guild.name,
                     'created_at': message.created_at.astimezone(kst),
-                    'keywords_found': found_keywords
+                    'filter_reason': reason,  # 필터링 이유 추가
+                    'message_length': len(message.content),
+                    'has_mention': '@' in message.content,
+                    'has_url': 'http' in message.content.lower(),
                 }
                 self.collected_messages.append(message_data)
         
         return batch_filtered
     
     def group_context_messages(self):
-        """연속 메시지를 묶어서 맥락 파악 개선 (대용량 최적화)"""
-        print(f'\n🔗 맥락 묶기 처리 중 (대용량 데이터)...')
+        """맥락 묶기 처리 (기존과 동일하지만 성능 최적화)"""
+        print(f'\n🔗 맥락 묶기 처리 중...')
         
         if len(self.collected_messages) > 1000:
-            print(f'⚠️  대용량 데이터({len(self.collected_messages):,}개) 처리 중입니다. 시간이 소요될 수 있습니다.')
+            print(f'⚠️  대용량 데이터({len(self.collected_messages):,}개) 처리 중입니다.')
         
-        # 시간순으로 정렬 (모든 채널의 모든 메시지)
-        print(f'   📊 시간순 정렬 중...')
+        # 시간순으로 정렬
         all_messages_sorted = sorted(self.collected_messages, key=lambda x: x['created_at'])
         
         # 작성자별로 그룹핑 (성능 최적화)
-        print(f'   👥 작성자별 그룹핑 중...')
         author_messages = {}
         for msg in all_messages_sorted:
             author = msg['author']
@@ -200,33 +280,18 @@ class MessageCollector(discord.Client):
             author_messages[author].append(msg)
         
         # 맥락 그룹 생성
-        print(f'   🔄 맥락 그룹 생성 중...')
         context_groups = []
         processed_message_ids = set()
         
-        progress_counter = 0
-        total_messages = len(all_messages_sorted)
-        
         for msg in all_messages_sorted:
-            progress_counter += 1
-            
-            # 진행률 표시 (1000개마다)
-            if progress_counter % 1000 == 0 or progress_counter == total_messages:
-                progress = progress_counter / total_messages * 100
-                print(f'      🔄 진행률: {progress:5.1f}% ({progress_counter:,}/{total_messages:,})')
-            
             # 이미 처리된 메시지는 건너뛰기
             if msg['id'] in processed_message_ids:
-                continue
-            
-            # 키워드가 포함된 메시지만 맥락 묶기 시작점으로 사용
-            if not msg['keywords_found']:
                 continue
             
             author = msg['author']
             msg_time = msg['created_at']
             
-            # 해당 작성자의 이후 5개 메시지 찾기 (시간 제한: 10분 이내)
+            # 맥락 그룹 시작
             context_messages = [msg]
             processed_message_ids.add(msg['id'])
             
@@ -234,39 +299,43 @@ class MessageCollector(discord.Client):
             msg_index = next((i for i, m in enumerate(author_msg_list) if m['id'] == msg['id']), -1)
             
             if msg_index >= 0:
-                # 이후 최대 5개 메시지 수집
-                for i in range(msg_index + 1, min(msg_index + 6, len(author_msg_list))):
+                # 이후 최대 4개 메시지 수집 (5개에서 줄임)
+                for i in range(msg_index + 1, min(msg_index + 5, len(author_msg_list))):
                     next_msg = author_msg_list[i]
                     time_diff = (next_msg['created_at'] - msg_time).total_seconds() / 60  # 분 단위
                     
-                    # 10분 이내의 메시지만 포함
-                    if time_diff <= 10:
+                    # 5분 이내의 메시지만 포함 (10분에서 줄임)
+                    if time_diff <= 5:
                         context_messages.append(next_msg)
                         processed_message_ids.add(next_msg['id'])
                     else:
                         break
             
-            # 맥락 그룹 생성 (1개여도 포함 - 키워드가 있으니까)
-            if len(context_messages) >= 1:
-                combined_content = ' '.join([m['content'] for m in context_messages])
-                all_keywords = []
-                for m in context_messages:
-                    all_keywords.extend(m['keywords_found'])
-                
-                context_group = {
-                    'id': f"context_{msg['id']}",
-                    'content': combined_content,
-                    'original_content': msg['content'],
-                    'author': author,
-                    'channel': msg['channel'],
-                    'guild': msg['guild'],
-                    'created_at': msg['created_at'],
-                    'keywords_found': list(set(all_keywords)),  # 중복 제거
-                    'message_count': len(context_messages),
-                    'context_messages': context_messages,
-                    'is_context_grouped': len(context_messages) > 1
-                }
-                context_groups.append(context_group)
+            # 맥락 그룹 생성
+            combined_content = ' '.join([m['content'] for m in context_messages])
+            
+            # 모든 필터링 이유 수집
+            all_reasons = []
+            for m in context_messages:
+                if 'filter_reason' in m:
+                    all_reasons.append(m['filter_reason'])
+            
+            context_group = {
+                'id': f"context_{msg['id']}",
+                'content': combined_content,
+                'original_content': msg['content'],
+                'author': author,
+                'channel': msg['channel'],
+                'guild': msg['guild'],
+                'created_at': msg['created_at'],
+                'filter_reasons': all_reasons,  # 필터링 이유들
+                'message_count': len(context_messages),
+                'context_messages': context_messages,
+                'is_context_grouped': len(context_messages) > 1,
+                'total_length': len(combined_content),
+                'keywords_found': []  # AI에서 채워질 예정
+            }
+            context_groups.append(context_group)
         
         # 원본 메시지 리스트를 맥락 그룹으로 교체
         original_count = len(self.collected_messages)
@@ -282,133 +351,48 @@ class MessageCollector(discord.Client):
         print(f'      📝 묶인 그룹: {grouped_count:,}개')
         print(f'      📊 총 포함 메시지: {total_context_messages:,}개')
         print(f'      🎯 압축 비율: {(len(context_groups)/original_count*100):.1f}%')
-        
-        # AI 분석 예상 비용 계산
-        estimated_batches = (len(context_groups) + 14) // 15  # 15개씩 배치
-        estimated_cost_won = estimated_batches * 5  # 배치당 약 5원 예상
-        print(f'      💰 예상 AI 분석 비용: 약 {estimated_cost_won:,}원 ({estimated_batches}배치)')
     
-    def analyze_keywords_and_messages(self, schedule_keywords):
-        """키워드별 분석 및 샘플 메시지 출력 (대용량 데이터 대응)"""
+    def analyze_filtering_quality(self):
+        """필터링 품질 분석 (새로운 기능)"""
+        print(f'\n🔍 필터링 품질 분석:')
+        print('=' * 60)
         
-        # 키워드별 통계 수집
-        keyword_stats = {}
-        for keyword in schedule_keywords:
-            keyword_stats[keyword] = []
-        
-        # 각 메시지에서 발견된 키워드 분류
+        # 필터링 이유별 통계
+        reason_stats = {}
         for msg in self.collected_messages:
-            for keyword in msg['keywords_found']:
-                if keyword in keyword_stats:
-                    keyword_stats[keyword].append(msg)
-        
-        # 키워드별 통계 출력
-        print(f'\n📈 키워드별 사용 통계 (10일간):')
-        print('=' * 80)
-        
-        # 사용량 순으로 정렬
-        sorted_keywords = sorted(keyword_stats.items(), key=lambda x: len(x[1]), reverse=True)
-        
-        # 상위 15개 키워드만 표시
-        for i, (keyword, messages) in enumerate(sorted_keywords[:15]):
-            if len(messages) > 0:
-                print(f'🔑 {i+1:2d}. "{keyword}": {len(messages):3d}개 그룹')
-        
-        # 나머지 키워드 요약
-        remaining_keywords = sorted_keywords[15:]
-        if remaining_keywords:
-            total_remaining = sum(len(messages) for _, messages in remaining_keywords)
-            print(f'🔑     ... 기타 {len(remaining_keywords)}개 키워드: {total_remaining}개 그룹')
-        
-        print(f'\n📋 주요 키워드별 샘플 메시지 (상위 5개):')
-        print('=' * 80)
-        
-        # 상위 5개 키워드만 상세 분석
-        for keyword, messages in sorted_keywords[:5]:
-            if len(messages) == 0:
-                continue
-                
-            print(f'\n🔍 키워드: "{keyword}" ({len(messages)}개 그룹)')
-            print('-' * 60)
-            
-            # 샘플 5개만 표시
-            sample_messages = messages[:5]
-            for i, msg in enumerate(sample_messages):
-                # 맥락 그룹인지 단일 메시지인지 구분
-                if msg.get('is_context_grouped', False):
-                    # 맥락이 묶인 경우
-                    print(f'   {i+1}. 🔗[맥락그룹] [{msg["channel"]:12s}] {msg["author"]:15s}')
-                    print(f'      📝 "{msg["content"][:80]}..."')
-                    print(f'      📊 {msg["message_count"]}개 메시지 | 🕐 {msg["created_at"].strftime("%m-%d %H:%M")}')
+            for reason in msg.get('filter_reasons', []):
+                # 이유에서 패턴 추출
+                if ':' in reason:
+                    reason_type = reason.split(':')[0]
                 else:
-                    # 단일 메시지인 경우
-                    highlighted_content = msg['content'][:80]
-                    for kw in msg['keywords_found']:
-                        highlighted_content = highlighted_content.replace(kw, f'【{kw}】')
-                    
-                    print(f'   {i+1}. [{msg["channel"]:12s}] {msg["author"]:15s}')
-                    print(f'      💬 "{highlighted_content}..."')
-                    print(f'      🕐 {msg["created_at"].strftime("%m-%d %H:%M")}')
-            
-            if len(messages) > 5:
-                print(f'      ... 및 {len(messages) - 5}개 추가 메시지')
+                    reason_type = reason
+                
+                reason_stats[reason_type] = reason_stats.get(reason_type, 0) + 1
         
-        # 채널별 통계 (상위 10개만)
-        print(f'\n📊 채널별 상위 10개 (10일간):')
-        print('=' * 80)
+        print('🏷️ 필터링 이유별 통계:')
+        for reason, count in sorted(reason_stats.items(), key=lambda x: x[1], reverse=True):
+            print(f'   • {reason}: {count}개')
         
-        channel_stats = {}
-        for msg in self.collected_messages:
-            channel = msg['channel']
-            if channel not in channel_stats:
-                channel_stats[channel] = {
-                    'groups': [],
-                    'total_messages': 0,
-                    'grouped_count': 0
-                }
-            
-            channel_stats[channel]['groups'].append(msg)
-            channel_stats[channel]['total_messages'] += msg.get('message_count', 1)
-            if msg.get('is_context_grouped', False):
-                channel_stats[channel]['grouped_count'] += 1
+        # 메시지 길이 분석
+        lengths = [msg.get('total_length', 0) for msg in self.collected_messages]
+        if lengths:
+            avg_length = sum(lengths) / len(lengths)
+            print(f'\n📏 메시지 길이 분석:')
+            print(f'   • 평균 길이: {avg_length:.1f}자')
+            print(f'   • 최단: {min(lengths)}자')
+            print(f'   • 최장: {max(lengths)}자')
         
-        # 그룹 수 순으로 정렬하여 상위 10개만
-        sorted_channels = sorted(channel_stats.items(), key=lambda x: len(x[1]['groups']), reverse=True)
+        # 샘플 메시지 표시 (품질 확인용)
+        print(f'\n📋 필터링된 샘플 메시지 (품질 확인):')
+        print('-' * 60)
+        for i, msg in enumerate(self.collected_messages[:5]):
+            print(f'\n{i+1}. [{msg["channel"]:12s}] {msg["author"]:15s}')
+            print(f'   💬 "{msg["content"][:80]}..."')
+            print(f'   🎯 필터링 이유: {", ".join(msg.get("filter_reasons", ["없음"]))[:50]}...')
+            print(f'   🕐 {msg["created_at"].strftime("%m-%d %H:%M")} | 길이: {msg.get("total_length", 0)}자')
         
-        for i, (channel, stats) in enumerate(sorted_channels[:10]):
-            groups = stats['groups']
-            grouped_count = stats['grouped_count']
-            total_msg_count = stats['total_messages']
-            
-            print(f'{i+1:2d}. 📝 {channel:20s}: {len(groups):3d}개 그룹 (총 {total_msg_count:,}개 메시지)')
-            
-            # 해당 채널의 주요 키워드 (상위 3개)
-            channel_keywords = {}
-            for msg in groups:
-                for keyword in msg['keywords_found']:
-                    channel_keywords[keyword] = channel_keywords.get(keyword, 0) + 1
-            
-            if channel_keywords:
-                top_keywords = sorted(channel_keywords.items(), key=lambda x: x[1], reverse=True)[:3]
-                keywords_str = ', '.join([f'{kw}({count})' for kw, count in top_keywords])
-                print(f'     🔑 주요 키워드: {keywords_str}')
-        
-        if len(sorted_channels) > 10:
-            remaining_channels = len(sorted_channels) - 10
-            remaining_groups = sum(len(stats['groups']) for _, stats in sorted_channels[10:])
-            print(f'     ... 기타 {remaining_channels}개 채널: {remaining_groups}개 그룹')
-        
-        # 키워드 타당성 평가 가이드 (요약)
-        print(f'\n💡 10일간 데이터 분석 완료!')
-        print('=' * 80)
-        print(f'🎯 발견된 패턴:')
-        print(f'   📊 총 {len(self.collected_messages):,}개 맥락 그룹 생성')
-        print(f'   🔑 활성 키워드: {len([k for k, m in sorted_keywords if len(m) > 0])}개')
-        print(f'   📝 주요 채널: {min(10, len(sorted_channels))}개')
-        print(f'   💰 예상 AI 분석 비용: 약 {((len(self.collected_messages) + 14) // 15 * 5):,}원')
-        print()
-        print(f'🚀 AI 분석 단계로 진행할 준비가 완료되었습니다!')
-        print(f'📝 대용량 데이터로 더 정확한 일정 분류 성능을 확인할 수 있습니다.')
+        if len(self.collected_messages) > 5:
+            print(f'   ... 및 {len(self.collected_messages) - 5}개 추가 그룹')
 
 async def collect_discord_messages():
     """Discord 메시지 수집 메인 함수"""
@@ -427,7 +411,7 @@ async def collect_discord_messages():
     
     try:
         await collector.start(token)
-        collected_messages = collector.collected_messages.copy()  # 복사본 생성
+        collected_messages = collector.collected_messages.copy()
         print("✅ 메시지 수집 완료")
         
     except discord.LoginFailure:
@@ -449,19 +433,3 @@ async def collect_discord_messages():
         await asyncio.sleep(1)
     
     return collected_messages
-
-# 이 파일이 직접 실행될 때만 테스트 수행
-if __name__ == "__main__":
-    print("=" * 60)
-    print("🤖 Discord Schedule Bot - 메시지 수집 테스트")
-    print("=" * 60)
-    
-    # 비동기 함수 실행
-    messages = asyncio.run(collect_discord_messages())
-    
-    print(f"\n🎯 최종 결과: {len(messages)}개의 메시지를 수집했습니다!")
-    
-    if messages:
-        print("\n🔍 상세 분석을 위해 AI 분석 단계로 넘어갈 준비가 되었습니다.")
-    else:
-        print("\n💡 메시지가 수집되지 않았습니다. 설정을 확인해보세요.")
